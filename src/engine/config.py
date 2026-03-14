@@ -13,6 +13,12 @@ from pydantic_settings import BaseSettings
 MODEL_TASK = "claude-haiku-4-5-20251001"
 MODEL_WEEKLY = "claude-opus-4-6"
 
+# Per-token pricing (USD) — 2026-03
+TOKEN_COSTS = {
+    MODEL_TASK: {"input": 0.80 / 1_000_000, "output": 4.00 / 1_000_000},
+    MODEL_WEEKLY: {"input": 15.00 / 1_000_000, "output": 75.00 / 1_000_000},
+}
+
 
 class Settings(BaseSettings):
     anthropic_api_key: str

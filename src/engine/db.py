@@ -28,6 +28,18 @@ CREATE TABLE IF NOT EXISTS playbook_entries (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS token_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    model TEXT NOT NULL,
+    layer TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cost_usd REAL NOT NULL DEFAULT 0.0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_token_usage_created_at ON token_usage(created_at);
+
 CREATE TABLE IF NOT EXISTS state (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -145,6 +157,74 @@ class DB:
         ) as cur:
             rows = await cur.fetchall()
             return [dict(r) for r in rows]
+
+    # -- token usage --
+
+    async def record_usage(
+        self,
+        model: str,
+        layer: str,
+        input_tokens: int,
+        output_tokens: int,
+        cost_usd: float,
+    ):
+        await self._conn.execute(
+            "INSERT INTO token_usage (model, layer, input_tokens, output_tokens, cost_usd) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (model, layer, input_tokens, output_tokens, cost_usd),
+        )
+        await self._conn.commit()
+        logger.debug(
+            "recorded usage: model=%s layer=%s in=%d out=%d cost=$%.4f",
+            model, layer, input_tokens, output_tokens, cost_usd,
+        )
+
+    async def get_usage_summary(self, days: int = 7) -> dict:
+        """Get token usage breakdown by layer and model for the past N days."""
+        rows_by_layer = []
+        async with self._conn.execute(
+            "SELECT layer, model, "
+            "SUM(input_tokens) as total_input, "
+            "SUM(output_tokens) as total_output, "
+            "SUM(cost_usd) as total_cost, "
+            "COUNT(*) as call_count "
+            "FROM token_usage "
+            "WHERE created_at >= datetime('now', ?) "
+            "GROUP BY layer, model "
+            "ORDER BY total_cost DESC",
+            (f"-{days} days",),
+        ) as cur:
+            rows_by_layer = [dict(r) for r in await cur.fetchall()]
+
+        rows_by_day = []
+        async with self._conn.execute(
+            "SELECT date(created_at) as day, "
+            "SUM(input_tokens) as total_input, "
+            "SUM(output_tokens) as total_output, "
+            "SUM(cost_usd) as total_cost, "
+            "COUNT(*) as call_count "
+            "FROM token_usage "
+            "WHERE created_at >= datetime('now', ?) "
+            "GROUP BY date(created_at) "
+            "ORDER BY day",
+            (f"-{days} days",),
+        ) as cur:
+            rows_by_day = [dict(r) for r in await cur.fetchall()]
+
+        total_cost = sum(r["total_cost"] for r in rows_by_layer)
+        total_input = sum(r["total_input"] for r in rows_by_layer)
+        total_output = sum(r["total_output"] for r in rows_by_layer)
+        total_calls = sum(r["call_count"] for r in rows_by_layer)
+
+        return {
+            "days": days,
+            "total_cost_usd": round(total_cost, 4),
+            "total_input_tokens": total_input,
+            "total_output_tokens": total_output,
+            "total_calls": total_calls,
+            "by_layer": rows_by_layer,
+            "by_day": rows_by_day,
+        }
 
     # -- stats --
 

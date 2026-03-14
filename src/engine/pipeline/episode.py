@@ -5,7 +5,7 @@ import logging
 
 import anthropic
 
-from engine.config import MODEL_TASK
+from engine.config import MODEL_TASK, TOKEN_COSTS
 from engine.db import DB
 from engine.pipeline.collector import Frame
 
@@ -95,7 +95,20 @@ async def process_window(
             ],
         )
         raw = response.content[0].text
-        logger.debug("haiku response: %d chars, usage: %s", len(raw), response.usage)
+        usage = response.usage
+        logger.debug("haiku response: %d chars, usage: %s", len(raw), usage)
+
+        # Record token usage
+        costs = TOKEN_COSTS.get(MODEL_TASK, {"input": 0, "output": 0})
+        cost_usd = usage.input_tokens * costs["input"] + usage.output_tokens * costs["output"]
+        await db.record_usage(
+            model=MODEL_TASK,
+            layer="episode",
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            cost_usd=cost_usd,
+        )
+        logger.debug("recorded usage: model=%s cost=$%.6f", MODEL_TASK, cost_usd)
 
         text = raw.strip()
         if text.startswith("```"):

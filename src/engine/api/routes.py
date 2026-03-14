@@ -1,6 +1,10 @@
 """Memory Protocol REST endpoints + engine management."""
 
+import logging
+
 from fastapi import APIRouter, Request
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -33,6 +37,15 @@ async def engine_status(request: Request):
     db = request.app.state.db
     status = await db.get_status()
     return status
+
+
+@router.get("/engine/usage")
+async def engine_usage(request: Request, days: int = 7):
+    """Get token usage breakdown for the past N days."""
+    db = request.app.state.db
+    logger.debug("fetching usage summary for past %d days", days)
+    summary = await db.get_usage_summary(days=days)
+    return summary
 
 
 @router.post("/engine/distill")

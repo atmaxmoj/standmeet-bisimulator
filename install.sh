@@ -3,7 +3,7 @@
 # Bisimulator one-line installer:
 #   curl -fsSL https://raw.githubusercontent.com/.../install.sh | bash
 #
-# Prerequisites: Docker must be running.
+# Prerequisites: macOS + Docker must be running.
 #
 set -euo pipefail
 
@@ -19,6 +19,10 @@ error() { echo -e "${RED}[bisimulator]${NC} $*"; exit 1; }
 OS="$(uname -s)"
 info "Detected OS: $OS"
 
+if [ "$OS" != "Darwin" ]; then
+    error "bisimulator requires macOS (native screen capture uses CoreGraphics + Vision framework)"
+fi
+
 # --- Check Docker ---
 if ! command -v docker >/dev/null 2>&1; then
     error "Docker not found. Install Docker Desktop first: https://www.docker.com/products/docker-desktop/"
@@ -28,79 +32,31 @@ if ! docker info >/dev/null 2>&1; then
 fi
 info "Docker is running"
 
-# --- Install screenpipe ---
-if command -v screenpipe >/dev/null 2>&1; then
-    info "screenpipe already installed"
-else
-    info "Installing screenpipe..."
-    case "$OS" in
-        Darwin)
-            if ! command -v brew >/dev/null 2>&1; then
-                error "Homebrew not found. Install it first: https://brew.sh"
-            fi
-            brew install screenpipe
-            ;;
-        Linux)
-            if command -v curl >/dev/null 2>&1; then
-                curl -fsSL https://screenpi.pe/install.sh | bash
-            else
-                error "curl not found. Install curl and try again."
-            fi
-            ;;
-        *)
-            error "Unsupported OS: $OS. Install screenpipe manually: https://github.com/mediar-ai/screenpipe"
-            ;;
-    esac
-    info "screenpipe installed"
+# --- Check uv ---
+if ! command -v uv >/dev/null 2>&1; then
+    info "Installing uv (Python package manager)..."
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="$HOME/.local/bin:$PATH"
 fi
-
-# --- Start screenpipe ---
-if pgrep -x screenpipe >/dev/null 2>&1; then
-    info "screenpipe already running"
-else
-    info "Starting screenpipe..."
-    mkdir -p "${HOME}/.screenpipe"
-    screenpipe > /tmp/screenpipe.log 2>&1 &
-    info "Waiting for screenpipe to initialize..."
-    for i in $(seq 1 30); do
-        [ -f "${HOME}/.screenpipe/db.sqlite" ] && break
-        sleep 2
-        printf "."
-    done
-    echo ""
-fi
-
-case "$OS" in
-    Darwin) SP_DATA="${HOME}/.screenpipe" ;;
-    Linux)  SP_DATA="${XDG_DATA_HOME:-${HOME}/.local/share}/screenpipe" ;;
-esac
-
-if [ -f "$SP_DATA/db.sqlite" ]; then
-    info "screenpipe DB ready"
-else
-    warn "screenpipe DB not found yet."
-    case "$OS" in
-        Darwin) warn "You may need to grant screen recording permission:" ;
-                warn "  System Settings > Privacy & Security > Screen Recording > screenpipe" ;;
-        Linux)  warn "Make sure screenpipe has screen capture access." ;;
-    esac
-fi
+info "uv is available"
 
 # --- Clone or update bisimulator ---
-INSTALL_DIR="${BISIMULATOR_DIR:-${HOME}/.bisimulator}"
+INSTALL_DIR="${BISIMULATOR_DIR:-${HOME}/.bisimulator/app}"
 
-if [ -d "$INSTALL_DIR" ]; then
+if [ -d "$INSTALL_DIR/.git" ]; then
     info "Updating bisimulator in $INSTALL_DIR..."
     cd "$INSTALL_DIR"
     git pull --ff-only 2>/dev/null || true
 else
     info "Installing bisimulator to $INSTALL_DIR..."
-    git clone https://github.com/user/bisimulator.git "$INSTALL_DIR" 2>/dev/null || {
-        # If no remote repo yet, just create dir structure
+    mkdir -p "$(dirname "$INSTALL_DIR")"
+    git clone https://github.com/atmaxmoj/standmeet-bisimulator.git "$INSTALL_DIR" 2>/dev/null || {
         mkdir -p "$INSTALL_DIR"
-        warn "No remote repo found — copying local files"
+        warn "No remote repo found — assuming local development"
     }
 fi
+
+cd "$INSTALL_DIR"
 
 # --- API key ---
 if [ -f "$INSTALL_DIR/.env" ]; then
@@ -121,11 +77,38 @@ else
     error "ANTHROPIC_API_KEY is required"
 fi
 
-# --- Start ---
+# --- Install capture daemon dependencies ---
+info "Installing capture daemon dependencies..."
+cd "$INSTALL_DIR/capture"
+uv sync
 cd "$INSTALL_DIR"
-export SCREENPIPE_HOST_PATH="$SP_DATA"
 
-info "Building and starting bisimulator..."
+# --- Start capture daemon ---
+mkdir -p "${HOME}/.bisimulator"
+
+if pgrep -f "python -m capture" >/dev/null 2>&1; then
+    info "Capture daemon already running (pid $(pgrep -f 'python -m capture'))"
+else
+    info "Starting capture daemon..."
+    cd "$INSTALL_DIR/capture"
+    uv run python -m capture > /tmp/bisimulator-capture.log 2>&1 &
+    cd "$INSTALL_DIR"
+    sleep 2
+    if pgrep -f "python -m capture" >/dev/null 2>&1; then
+        info "Capture daemon started (pid $(pgrep -f 'python -m capture'))"
+    else
+        error "Capture daemon failed to start. Check /tmp/bisimulator-capture.log"
+    fi
+fi
+
+# --- Screen recording permission check ---
+if [ ! -f "${HOME}/.bisimulator/capture.db" ]; then
+    warn "Capture DB not created yet. You may need to grant screen recording permission:"
+    warn "  System Settings > Privacy & Security > Screen Recording > Terminal (or your terminal app)"
+fi
+
+# --- Start engine ---
+info "Building and starting bisimulator engine..."
 docker compose up --build -d
 
 echo ""
@@ -133,10 +116,12 @@ info "========================================="
 info "  Bisimulator is running!"
 info "========================================="
 info ""
-info "  API:     http://localhost:5001"
-info "  Status:  curl http://localhost:5001/engine/status"
-info "  Logs:    cd $INSTALL_DIR && docker compose logs -f"
+info "  API:      http://localhost:5001"
+info "  Status:   curl http://localhost:5001/engine/status"
+info "  Usage:    curl http://localhost:5001/engine/usage"
+info "  Logs:     cd $INSTALL_DIR && docker compose logs -f"
+info "  Capture:  tail -f /tmp/bisimulator-capture.log"
 info ""
-info "  Stop:    cd $INSTALL_DIR && docker compose down"
-info "  Restart: cd $INSTALL_DIR && docker compose up -d"
+info "  Stop:     cd $INSTALL_DIR && make stop"
+info "  Restart:  cd $INSTALL_DIR && make start"
 info ""

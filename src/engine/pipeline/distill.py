@@ -5,7 +5,7 @@ import logging
 
 import anthropic
 
-from engine.config import MODEL_WEEKLY
+from engine.config import MODEL_WEEKLY, TOKEN_COSTS
 from engine.db import DB
 
 logger = logging.getLogger(__name__)
@@ -130,7 +130,20 @@ async def weekly_distill(
             ],
         )
         raw = response.content[0].text
-        logger.debug("opus response: %d chars, usage: %s", len(raw), response.usage)
+        usage = response.usage
+        logger.debug("opus response: %d chars, usage: %s", len(raw), usage)
+
+        # Record token usage
+        costs = TOKEN_COSTS.get(MODEL_WEEKLY, {"input": 0, "output": 0})
+        cost_usd = usage.input_tokens * costs["input"] + usage.output_tokens * costs["output"]
+        await db.record_usage(
+            model=MODEL_WEEKLY,
+            layer="distill",
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            cost_usd=cost_usd,
+        )
+        logger.debug("recorded usage: model=%s cost=$%.6f", MODEL_WEEKLY, cost_usd)
 
         # Parse JSON (handle markdown code fences)
         text = raw.strip()
