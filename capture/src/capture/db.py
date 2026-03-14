@@ -48,8 +48,13 @@ class CaptureDB:
         self._conn.commit()
         logger.info("capture DB ready at %s (WAL mode)", self.path)
 
+    def checkpoint(self):
+        """Flush WAL to main DB so Docker readers can see latest data."""
+        self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
     def close(self):
         if self._conn:
+            self.checkpoint()
             logger.debug("closing capture DB")
             self._conn.close()
 

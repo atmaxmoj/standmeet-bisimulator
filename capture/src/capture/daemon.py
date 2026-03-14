@@ -46,9 +46,11 @@ def run(db: CaptureDB):
         len(collectors),
     )
 
+    cycle_count = 0
     while True:
         try:
             cycle_start = time.monotonic()
+            cycle_count += 1
             displays = get_all_displays()
             app_name, window_name = get_frontmost_app()
             timestamp = datetime.now(timezone.utc).isoformat()
@@ -94,6 +96,10 @@ def run(db: CaptureDB):
                         os_events += 1
                 except Exception:
                     logger.exception("collector %s/%s failed", collector.event_type, collector.source)
+
+            # Checkpoint WAL every ~30s so Docker readers see fresh data
+            if cycle_count % 10 == 0:
+                db.checkpoint()
 
             elapsed = time.monotonic() - cycle_start
             logger.debug(

@@ -47,8 +47,13 @@ class AudioDB:
         self._conn.commit()
         logger.info("audio DB ready at %s (WAL mode)", self.path)
 
+    def checkpoint(self):
+        """Flush WAL to main DB so Docker readers can see latest data."""
+        self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
     def close(self):
         if self._conn:
+            self.checkpoint()
             logger.debug("closing audio DB")
             self._conn.close()
 
