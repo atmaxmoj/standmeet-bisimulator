@@ -162,8 +162,8 @@ def cmd_start():
         daemon_start("capture", ROOT / "capture")
     daemon_start("audio", ROOT / "audio")
 
-    print("==> Starting engine + web containers...")
-    run(["docker", "compose", "up", "-d"], cwd=ROOT)
+    print("==> Building + starting engine + web containers...")
+    run(["docker", "compose", "up", "-d", "--build"], cwd=ROOT)
 
     print()
     print("  Dashboard:  http://localhost:5174")
