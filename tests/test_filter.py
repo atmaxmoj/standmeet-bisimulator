@@ -1,9 +1,10 @@
-"""Tests for pipeline filter: noise removal + window accumulation."""
+"""Tests for pipeline filter: noise removal + batch window detection."""
 
 from datetime import datetime, timezone, timedelta
+from unittest.mock import patch
 
 from engine.pipeline.collector import Frame
-from engine.pipeline.filter import should_keep, WindowAccumulator, IGNORE_APPS
+from engine.pipeline.filter import should_keep, detect_windows, IGNORE_APPS
 
 
 def _frame(
@@ -43,78 +44,96 @@ class TestShouldKeep:
         assert should_keep(f2) is False
 
 
-class TestWindowAccumulator:
-    def test_single_frame_stays_in_buffer(self):
-        acc = WindowAccumulator(window_minutes=30)
-        completed = acc.feed([_frame()])
-        assert completed == []
+class TestDetectWindows:
+    def test_empty_input(self):
+        windows, remainder = detect_windows([])
+        assert windows == []
+        assert remainder == []
 
-    def test_flush_emits_buffer(self):
-        acc = WindowAccumulator(window_minutes=30)
-        acc.feed([_frame()])
-        result = acc.flush()
-        assert len(result) == 1
+    def test_single_frame_stays_as_remainder(self):
+        """A single recent frame should stay in remainder (not yet a complete window)."""
+        now = datetime.now(timezone.utc)
+        f = _frame(timestamp=now.isoformat())
+        windows, remainder = detect_windows([f])
+        assert windows == []
+        assert len(remainder) == 1
 
-    def test_flush_empty_returns_none(self):
-        acc = WindowAccumulator(window_minutes=30)
-        assert acc.flush() is None
+    def test_old_frames_emitted(self):
+        """Frames older than idle_seconds from now should be emitted."""
+        old = datetime.now(timezone.utc) - timedelta(minutes=30)
+        frames = [
+            _frame(id=1, timestamp=old.isoformat()),
+            _frame(id=2, timestamp=(old + timedelta(seconds=10)).isoformat()),
+        ]
+        windows, remainder = detect_windows(frames, idle_seconds=60)
+        assert len(windows) == 1
+        assert len(windows[0]) == 2
+        assert remainder == []
 
-    def test_window_closes_on_time_exceeded(self):
-        acc = WindowAccumulator(window_minutes=5)
-        t0 = datetime(2026, 3, 14, 10, 0, tzinfo=timezone.utc)
-
-        frames = []
-        for i in range(10):
-            t = t0 + timedelta(minutes=i)
-            frames.append(_frame(id=i, timestamp=t.isoformat()))
-
-        completed = acc.feed(frames)
-        # 10 frames over 9 minutes with 5-min window → should emit at least one window
-        assert len(completed) >= 1
-
-    def test_idle_gap_triggers_flush(self):
-        acc = WindowAccumulator(window_minutes=30, idle_threshold_seconds=60)
-        t0 = datetime(2026, 3, 14, 10, 0, tzinfo=timezone.utc)
-        t1 = t0 + timedelta(seconds=30)
-        t2 = t0 + timedelta(minutes=5)  # 5 min gap > 60s threshold
-
+    def test_idle_gap_splits_window(self):
+        """A gap > idle_seconds between frames splits into separate windows."""
+        t0 = datetime.now(timezone.utc) - timedelta(hours=1)
         frames = [
             _frame(id=1, timestamp=t0.isoformat()),
-            _frame(id=2, timestamp=t1.isoformat()),
-            _frame(id=3, timestamp=t2.isoformat()),
+            _frame(id=2, timestamp=(t0 + timedelta(seconds=10)).isoformat()),
+            # 10 minute gap
+            _frame(id=3, timestamp=(t0 + timedelta(minutes=10)).isoformat()),
+            _frame(id=4, timestamp=(t0 + timedelta(minutes=10, seconds=5)).isoformat()),
         ]
+        windows, remainder = detect_windows(frames, idle_seconds=60)
+        # First group [1,2] emitted (idle gap before frame 3)
+        # Second group [3,4] — depends on whether it's old enough from "now"
+        assert len(windows) >= 1
+        assert len(windows[0]) == 2
 
-        completed = acc.feed(frames)
-        assert len(completed) == 1
-        # First two frames emitted as a window
-        assert len(completed[0]) == 2
-        # Third frame should be in buffer
-        remaining = acc.flush()
-        assert len(remaining) == 1
-        assert remaining[0].id == 3
-
-    def test_noise_filtered_before_accumulation(self):
-        acc = WindowAccumulator(window_minutes=30)
-        frames = [
-            _frame(id=1, app_name="Finder", text="noise"),  # filtered
-            _frame(id=2, app_name="VSCode", text="real content here"),  # kept
-        ]
-        acc.feed(frames)
-        result = acc.flush()
-        assert len(result) == 1
-        assert result[0].id == 2
-
-    def test_multiple_windows_emitted(self):
-        acc = WindowAccumulator(window_minutes=2, idle_threshold_seconds=300)
-        t0 = datetime(2026, 3, 14, 10, 0, tzinfo=timezone.utc)
-
+    def test_time_span_splits_window(self):
+        """Window closes when span exceeds window_minutes."""
+        t0 = datetime.now(timezone.utc) - timedelta(hours=2)
         frames = []
         for i in range(10):
             t = t0 + timedelta(minutes=i)
             frames.append(_frame(id=i, timestamp=t.isoformat()))
 
-        completed = acc.feed(frames)
-        # Over 9 minutes with 2-min windows → should emit multiple windows
-        # Window closes when span > 2 min, so ~4 frames per window → 2 windows emitted
-        # (remaining frames stay in buffer)
-        assert len(completed) >= 2
+        windows, remainder = detect_windows(frames, window_minutes=5, idle_seconds=300)
+        # 10 frames over 9 min with 5-min window → at least 1 complete window
+        assert len(windows) >= 1
+
+    def test_multiple_windows(self):
+        """Multiple windows emitted when frames span long time."""
+        t0 = datetime.now(timezone.utc) - timedelta(hours=3)
+        frames = []
+        for i in range(20):
+            t = t0 + timedelta(minutes=i * 2)  # 2 min apart, 38 min total
+            frames.append(_frame(id=i, timestamp=t.isoformat()))
+
+        windows, remainder = detect_windows(frames, window_minutes=10, idle_seconds=300)
+        # 38 minutes / 10-min windows → at least 3 windows
+        assert len(windows) >= 3
+
+    def test_recent_frames_stay_as_remainder(self):
+        """Frames from the last few seconds should stay as remainder."""
+        now = datetime.now(timezone.utc)
+        frames = [
+            _frame(id=1, timestamp=(now - timedelta(seconds=10)).isoformat()),
+            _frame(id=2, timestamp=(now - timedelta(seconds=5)).isoformat()),
+            _frame(id=3, timestamp=now.isoformat()),
+        ]
+        windows, remainder = detect_windows(frames, idle_seconds=60)
+        assert windows == []
+        assert len(remainder) == 3
+
+    def test_mixed_old_and_recent(self):
+        """Old frames emitted as window, recent frames stay as remainder."""
+        now = datetime.now(timezone.utc)
+        old = now - timedelta(hours=1)
+        frames = [
+            _frame(id=1, timestamp=old.isoformat()),
+            _frame(id=2, timestamp=(old + timedelta(seconds=10)).isoformat()),
+            # 50 min gap → idle split
+            _frame(id=3, timestamp=(now - timedelta(seconds=5)).isoformat()),
+        ]
+        windows, remainder = detect_windows(frames, idle_seconds=60)
+        assert len(windows) == 1
+        assert len(windows[0]) == 2
+        assert len(remainder) == 1
+        assert remainder[0].id == 3

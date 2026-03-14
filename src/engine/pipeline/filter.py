@@ -1,11 +1,7 @@
-"""Rules-based signal filter. No LLM, $0 cost.
-
-Only does noise removal. Task boundary detection is Haiku's job.
-"""
+"""Rules-based signal filter + batch window detection. No LLM, $0 cost."""
 
 import logging
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 
 from engine.pipeline.collector import Frame
 
@@ -30,7 +26,6 @@ MIN_TEXT_LENGTH = 10
 
 
 def should_keep(frame: Frame) -> bool:
-    # Audio frames always pass through (already transcribed, no noise filtering needed)
     if frame.source == "audio":
         if not frame.text or not frame.text.strip():
             logger.debug("filtered out audio frame id=%d (empty text)", frame.id)
@@ -40,87 +35,66 @@ def should_keep(frame: Frame) -> bool:
         logger.debug("filtered out frame id=%d app=%s (ignored app)", frame.id, frame.app_name)
         return False
     if not frame.text or len(frame.text.strip()) < MIN_TEXT_LENGTH:
-        logger.debug("filtered out frame id=%d app=%s (text too short: %d chars)", frame.id, frame.app_name, len(frame.text.strip()) if frame.text else 0)
+        logger.debug(
+            "filtered out frame id=%d app=%s (text too short: %d chars)",
+            frame.id, frame.app_name, len(frame.text.strip()) if frame.text else 0,
+        )
         return False
     return True
 
 
-@dataclass
-class WindowAccumulator:
+def detect_windows(
+    frames: list[Frame],
+    window_minutes: int = 30,
+    idle_seconds: int = 300,
+) -> tuple[list[list[Frame]], list[Frame]]:
     """
-    Accumulates frames in fixed time windows.
-    Emits a window of frames every `window_minutes` OR when idle gap detected.
-    Haiku decides where the task boundaries are within each window.
+    Split sorted frames into time windows. Returns (complete_windows, remainder).
+
+    A window closes when:
+    - Gap between consecutive frames > idle_seconds (user went AFK)
+    - Time span from first to current frame > window_minutes
+
+    The last group is only emitted if the most recent frame is older than
+    idle_seconds from now (meaning the user has stopped). Otherwise it stays
+    as remainder for the next check.
     """
+    if not frames:
+        return [], []
 
-    window_minutes: int = 30
-    idle_threshold_seconds: int = 300
+    windows: list[list[Frame]] = []
+    current: list[Frame] = [frames[0]]
 
-    _buffer: list[Frame] = field(default_factory=list)
-
-    def feed(self, frames: list[Frame]) -> list[list[Frame]]:
-        """
-        Feed new frames. Returns completed windows (each = list of filtered frames).
-        A window closes when:
-          - Time span of buffer exceeds window_minutes
-          - Idle gap > idle_threshold between frames (user went AFK)
-        """
-        completed: list[list[Frame]] = []
-
-        for frame in frames:
-            if not should_keep(frame):
-                continue
-
-            # Check idle gap -> flush buffer
-            if self._buffer and self._idle_gap(self._buffer[-1], frame):
-                logger.debug(
-                    "idle gap detected between frame id=%d and id=%d, flushing %d frames",
-                    self._buffer[-1].id, frame.id, len(self._buffer),
-                )
-                completed.append(self._buffer)
-                self._buffer = []
-
-            self._buffer.append(frame)
-
-            # Check window duration -> flush buffer
-            if self._window_exceeded():
-                logger.debug(
-                    "window time exceeded (%d min), flushing %d frames",
-                    self.window_minutes, len(self._buffer),
-                )
-                completed.append(self._buffer)
-                self._buffer = []
-
-        logger.debug(
-            "feed: received %d frames, kept %d in buffer, emitted %d windows",
-            len(frames), len(self._buffer), len(completed),
-        )
-        return completed
-
-    def flush(self) -> list[Frame] | None:
-        """Force-flush the current buffer (e.g. on shutdown)."""
-        if self._buffer:
-            logger.debug("flush: emitting remaining %d frames", len(self._buffer))
-            buf = self._buffer
-            self._buffer = []
-            return buf
-        logger.debug("flush: buffer empty, nothing to emit")
-        return None
-
-    def _idle_gap(self, prev: Frame, curr: Frame) -> bool:
+    for f in frames[1:]:
         try:
-            t_prev = datetime.fromisoformat(prev.timestamp)
-            t_curr = datetime.fromisoformat(curr.timestamp)
-            return (t_curr - t_prev) > timedelta(seconds=self.idle_threshold_seconds)
+            prev_ts = datetime.fromisoformat(current[-1].timestamp)
+            curr_ts = datetime.fromisoformat(f.timestamp)
+            start_ts = datetime.fromisoformat(current[0].timestamp)
         except (ValueError, TypeError):
-            return False
+            current.append(f)
+            continue
 
-    def _window_exceeded(self) -> bool:
-        if len(self._buffer) < 2:
-            return False
+        gap = (curr_ts - prev_ts).total_seconds()
+        span = (curr_ts - start_ts).total_seconds()
+
+        if gap > idle_seconds or span > window_minutes * 60:
+            windows.append(current)
+            current = [f]
+        else:
+            current.append(f)
+
+    # Only emit the last group if the user has been idle long enough
+    if current:
         try:
-            t_start = datetime.fromisoformat(self._buffer[0].timestamp)
-            t_end = datetime.fromisoformat(self._buffer[-1].timestamp)
-            return (t_end - t_start) > timedelta(minutes=self.window_minutes)
+            last_ts = datetime.fromisoformat(current[-1].timestamp)
+            now = datetime.now(timezone.utc)
+            # Handle naive timestamps
+            if last_ts.tzinfo is None:
+                now = now.replace(tzinfo=None)
+            if (now - last_ts).total_seconds() > idle_seconds:
+                windows.append(current)
+                current = []
         except (ValueError, TypeError):
-            return False
+            pass
+
+    return windows, current

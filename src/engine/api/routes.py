@@ -9,6 +9,15 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
+
+def _notify_pipeline():
+    """Push lightweight signal to Huey queue. No-op if Huey not available."""
+    try:
+        from engine.tasks import on_new_data
+        on_new_data()
+    except Exception:
+        pass
+
 router = APIRouter()
 
 
@@ -56,6 +65,7 @@ async def ingest_frame(request: Request, body: FrameIngest):
         image_hash=body.image_hash,
         image_path=body.image_path,
     )
+    _notify_pipeline()
     return {"id": row_id}
 
 
@@ -70,6 +80,7 @@ async def ingest_audio(request: Request, body: AudioFrameIngest):
         source=body.source,
         chunk_path=body.chunk_path,
     )
+    _notify_pipeline()
     return {"id": row_id}
 
 

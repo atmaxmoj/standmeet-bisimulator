@@ -15,10 +15,12 @@ CREATE TABLE IF NOT EXISTS frames (
     display_id INTEGER NOT NULL DEFAULT 0,
     image_hash TEXT NOT NULL DEFAULT '',
     image_path TEXT NOT NULL DEFAULT '',
+    processed INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_frames_id ON frames(id);
+CREATE INDEX IF NOT EXISTS idx_frames_processed ON frames(processed);
 
 CREATE TABLE IF NOT EXISTS audio_frames (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -28,10 +30,12 @@ CREATE TABLE IF NOT EXISTS audio_frames (
     language TEXT NOT NULL DEFAULT '',
     source TEXT NOT NULL DEFAULT 'mic',
     chunk_path TEXT NOT NULL DEFAULT '',
+    processed INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_audio_frames_id ON audio_frames(id);
+CREATE INDEX IF NOT EXISTS idx_audio_frames_processed ON audio_frames(processed);
 
 CREATE TABLE IF NOT EXISTS os_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -98,7 +102,17 @@ class DB:
         logger.debug("connecting to database at %s", self.path)
         self._conn = await aiosqlite.connect(self.path)
         self._conn.row_factory = aiosqlite.Row
+        await self._conn.execute("PRAGMA journal_mode=WAL")
         await self._conn.executescript(SCHEMA)
+        # Migrations for existing databases
+        for sql in [
+            "ALTER TABLE frames ADD COLUMN processed INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE audio_frames ADD COLUMN processed INTEGER NOT NULL DEFAULT 0",
+        ]:
+            try:
+                await self._conn.execute(sql)
+            except Exception:
+                pass  # Column already exists
         await self._conn.commit()
         logger.info("database connected and schema initialized at %s", self.path)
 
