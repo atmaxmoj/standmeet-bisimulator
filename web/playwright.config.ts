@@ -4,12 +4,12 @@ export default defineConfig({
   testDir: "./tests",
   timeout: 30000,
   use: {
-    baseURL: "http://localhost:5174",
+    baseURL: "http://localhost:5175",
     screenshot: "on",
   },
   webServer: {
-    command: "npm run dev",
-    port: 5174,
+    command: "npx vite --port 5175",
+    port: 5175,
     reuseExistingServer: true,
   },
 });

@@ -1,0 +1,13 @@
+{
+  "name": "bisimulator",
+  "private": true,
+  "scripts": {
+    "setup": "uv run python cli.py setup",
+    "start": "uv run python cli.py start",
+    "stop": "uv run python cli.py stop",
+    "status": "uv run python cli.py status",
+    "logs": "uv run python cli.py logs",
+    "rebuild": "uv run python cli.py rebuild",
+    "test": "uv run python cli.py test"
+  }
+}
