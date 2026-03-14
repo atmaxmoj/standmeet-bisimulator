@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     # Engine storage
     db_path: str = "/data/engine.db"
 
+    # Native capture daemon DB
+    capture_db_path: str = "/data/capture/capture.db"
+
     # Polling
     poll_interval_seconds: int = 5
 

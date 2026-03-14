@@ -10,7 +10,7 @@ from fastapi import FastAPI
 
 from engine.config import Settings
 from engine.db import DB
-from engine.pipeline.collector import Frame, poll_screenpipe
+from engine.pipeline.collector import Frame, poll_native_capture, poll_screenpipe
 from engine.pipeline.episode import process_window
 from engine.pipeline.filter import WindowAccumulator
 
@@ -43,8 +43,16 @@ async def pipeline_loop(
     )
 
     # Start all collectors — each pushes to the same queue.
-    # To add a new signal source: write an async poll function and add it here.
+    # Both collectors gracefully wait if their DB doesn't exist.
     collectors = [
+        asyncio.create_task(
+            poll_native_capture(
+                db=db,
+                capture_db_path=settings.capture_db_path,
+                interval=settings.poll_interval_seconds,
+                on_frames=frame_queue,
+            )
+        ),
         asyncio.create_task(
             poll_screenpipe(
                 db=db,
@@ -53,8 +61,6 @@ async def pipeline_loop(
                 on_frames=frame_queue,
             )
         ),
-        # Example: to add shell history polling, you'd add:
-        # asyncio.create_task(poll_shell_history(db=db, interval=30, on_frames=frame_queue)),
     ]
 
     logger.debug("pipeline loop started with %d collectors", len(collectors))

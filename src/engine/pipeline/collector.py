@@ -100,3 +100,64 @@ async def poll_screenpipe(
             logger.exception("Error polling Screenpipe")
 
         await asyncio.sleep(interval)
+
+
+# ---------------------------------------------------------------------------
+# Native capture collector (reads from bisimulator's own capture daemon)
+# ---------------------------------------------------------------------------
+
+
+async def poll_native_capture(
+    db: DB,
+    capture_db_path: str,
+    interval: int,
+    on_frames: "asyncio.Queue[list[Frame]]",
+):
+    cursor_key = "native_capture_cursor"
+    logger.info("native capture collector started, db=%s, interval=%ds", capture_db_path, interval)
+
+    while True:
+        try:
+            if not Path(capture_db_path).exists():
+                logger.info(
+                    "capture DB not found at %s, waiting %ds...", capture_db_path, interval * 6
+                )
+                await asyncio.sleep(interval * 6)
+                continue
+
+            cursor = await db.get_state(cursor_key, 0)
+            logger.debug("polling native capture from cursor=%d", cursor)
+
+            async with aiosqlite.connect(
+                f"file:{capture_db_path}?mode=ro", uri=True
+            ) as cap_db:
+                cap_db.row_factory = aiosqlite.Row
+                async with cap_db.execute(
+                    "SELECT id, timestamp, app_name, window_name, text "
+                    "FROM frames WHERE id > ? ORDER BY id LIMIT 500",
+                    (cursor,),
+                ) as cur:
+                    rows = await cur.fetchall()
+
+            logger.debug("native capture query returned %d rows", len(rows))
+
+            if rows:
+                frames = [
+                    Frame(
+                        id=r["id"],
+                        source="native_capture",
+                        text=r["text"] or "",
+                        app_name=r["app_name"] or "",
+                        window_name=r["window_name"] or "",
+                        timestamp=r["timestamp"] or "",
+                    )
+                    for r in rows
+                ]
+                await on_frames.put(frames)
+                await db.set_state(cursor_key, frames[-1].id)
+                logger.debug("polled %d frames from native capture, new cursor=%d", len(frames), frames[-1].id)
+
+        except Exception:
+            logger.exception("error polling native capture")
+
+        await asyncio.sleep(interval)

@@ -5,9 +5,11 @@ services:
       - "5001:5000"
     volumes:
       - engine-data:/data
+      - ${HOME}/.bisimulator:/data/capture:ro
       - ${SCREENPIPE_HOST_PATH:-${HOME}/.screenpipe}:/data/screenpipe:ro
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - CAPTURE_DB_PATH=/data/capture/capture.db
       - SCREENPIPE_DB_PATH=/data/screenpipe/db.sqlite
       - DB_PATH=/data/engine.db
     restart: unless-stopped

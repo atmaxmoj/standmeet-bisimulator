@@ -1,0 +1,18 @@
+[project]
+name = "bisimulator-capture"
+version = "0.1.0"
+description = "Native macOS screen capture daemon for bisimulator"
+requires-python = ">=3.12"
+dependencies = [
+    "pyobjc-core>=10.0",
+    "pyobjc-framework-Cocoa>=10.0",
+    "pyobjc-framework-Quartz>=10.0",
+    "pyobjc-framework-Vision>=10.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/capture"]
