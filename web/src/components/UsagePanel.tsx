@@ -34,7 +34,7 @@ export function UsagePanel() {
   const maxDayCost = Math.max(...data.by_day.map((d) => d.total_cost), 0.01);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" data-testid="usage-panel">
       <div className="flex justify-end">
         <Button variant="outline" size="sm" onClick={load}>Refresh</Button>
       </div>

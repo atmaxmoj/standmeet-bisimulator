@@ -29,10 +29,10 @@ export function AudioPanel() {
   useEffect(() => { load(1); }, []);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" data-testid="audio-panel">
       <div className="flex justify-between items-center">
         <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">Page {page}</span>
+          <span className="text-sm text-muted-foreground" data-testid="page-indicator">Page {page}</span>
           <Button variant="outline" size="sm" onClick={() => load(page - 1)} disabled={page <= 1}>
             Prev
           </Button>
@@ -55,7 +55,7 @@ export function AudioPanel() {
       ) : (
         <div className="space-y-2">
           {frames.map((a) => (
-            <Card key={a.id}>
+            <Card key={a.id} data-testid="audio-card">
               <CardContent className="p-3">
                 <div className="flex items-center gap-3 mb-2">
                   <span className="text-xs text-muted-foreground">{fmtTime(a.timestamp)}</span>

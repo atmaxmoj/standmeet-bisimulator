@@ -37,10 +37,10 @@ export function EpisodesPanel() {
   useEffect(() => { load(1); }, []);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" data-testid="episodes-panel">
       <div className="flex justify-between items-center">
         <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground">Page {page}</span>
+          <span className="text-sm text-muted-foreground" data-testid="page-indicator">Page {page}</span>
           <Button variant="outline" size="sm" onClick={() => load(page - 1)} disabled={page <= 1}>
             Prev
           </Button>
@@ -63,11 +63,11 @@ export function EpisodesPanel() {
       ) : (
         <div className="space-y-3">
           {episodes.map((e) => (
-            <Card key={e.id}>
+            <Card key={e.id} data-testid="episode-card">
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm font-normal">{parseSummary(e.summary)}</CardTitle>
                 <CardDescription className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-                  <span>#{e.id}</span>
+                  <span data-testid="episode-id">#{e.id}</span>
                   <span>{e.app_names}</span>
                   <span>{e.frame_count} frames</span>
                   <span>{fmtTime(e.started_at)} — {fmtTime(e.ended_at)}</span>

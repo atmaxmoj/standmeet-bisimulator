@@ -52,9 +52,9 @@ export function PlaybooksPanel() {
   useEffect(() => { load(); }, []);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" data-testid="playbooks-panel">
       <div className="flex justify-between items-center">
-        <span className="text-sm text-muted-foreground">{playbooks.length} entries</span>
+        <span className="text-sm text-muted-foreground" data-testid="entries-count">{playbooks.length} entries</span>
         <div className="flex gap-2">
           <Button variant="default" size="sm" onClick={runDistill} disabled={distilling}>
             {distilling ? "Running..." : "Run Distill"}

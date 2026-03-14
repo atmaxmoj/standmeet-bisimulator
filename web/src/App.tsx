@@ -35,10 +35,10 @@ function Header() {
   }, []);
 
   return (
-    <header className="flex items-center justify-between px-6 py-4 border-b">
+    <header className="flex items-center justify-between px-6 py-4 border-b" data-testid="header">
       <h1 className="text-sm font-semibold tracking-wider">BISIMULATOR</h1>
       <div className="flex items-center gap-5 text-xs text-muted-foreground">
-        <span className="flex items-center gap-1.5">
+        <span className="flex items-center gap-1.5" data-testid="engine-status">
           <span
             className={`w-2 h-2 rounded-full ${
               status.online ? "bg-green-500" : "bg-destructive"
@@ -46,9 +46,9 @@ function Header() {
           />
           Engine
         </span>
-        <span>{status.episodes} episodes</span>
-        <span>{status.playbooks} playbooks</span>
-        <span className="font-medium text-primary">${status.cost.toFixed(4)}</span>
+        <span data-testid="episode-count">{status.episodes} episodes</span>
+        <span data-testid="playbook-count">{status.playbooks} playbooks</span>
+        <span className="font-medium text-primary" data-testid="total-cost">${status.cost.toFixed(4)}</span>
       </div>
     </header>
   );
