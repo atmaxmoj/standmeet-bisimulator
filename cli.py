@@ -280,8 +280,31 @@ def cmd_logs():
 
 
 def cmd_test():
-    print("==> Running Playwright tests...")
-    run(["npx", "playwright", "test"], cwd=ROOT / "web")
+    """Run tests. Usage: npm test [-- <suite>]
+    Suites: audio, web, all (default: all)
+    """
+    suite = sys.argv[2] if len(sys.argv) > 2 else "all"
+    results = []
+
+    if suite in ("audio", "all"):
+        print("==> Running audio pytest...")
+        r = run(["uv", "run", "--extra", "test", "pytest", "-v"], cwd=ROOT / "audio")
+        results.append(("audio", r.returncode))
+
+    if suite in ("web", "all"):
+        print("\n==> Running Playwright tests...")
+        r = run(["npx", "playwright", "test"], cwd=ROOT / "web")
+        results.append(("web", r.returncode))
+
+    if not results:
+        print(f"Unknown suite: {suite}. Available: audio, web, all")
+        sys.exit(1)
+
+    failed = [name for name, rc in results if rc != 0]
+    if failed:
+        print(f"\n==> FAILED: {', '.join(failed)}")
+        sys.exit(1)
+    print("\n==> ALL TESTS PASSED")
 
 
 def cmd_rebuild():

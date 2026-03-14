@@ -10,12 +10,23 @@ test.describe("Dashboard", () => {
     await page.screenshot({ path: "tests/screenshots/header.png", fullPage: false });
   });
 
-  test("Capture tab shows frames or empty state", async ({ page }) => {
+  test("Capture tab shows frames with pagination", async ({ page }) => {
     await page.goto("/");
     await page.getByRole("tab", { name: "Capture" }).click();
     const panel = page.getByTestId("frames-panel");
     await expect(panel).toBeVisible({ timeout: 10000 });
-    await expect(panel.getByTestId("page-indicator")).toBeVisible();
+
+    // Should have frame cards (capture is running)
+    const cards = panel.getByTestId("frame-card");
+    await expect(cards.first()).toBeVisible({ timeout: 10000 });
+
+    // Pagination should be fixed at bottom
+    const pagination = page.getByTestId("pagination");
+    await expect(pagination).toBeVisible();
+
+    // Click a frame card to expand it
+    await cards.first().click();
+
     await page.screenshot({ path: "tests/screenshots/capture.png", fullPage: true });
   });
 
@@ -64,6 +75,36 @@ test.describe("Dashboard", () => {
         "aria-selected",
         "true"
       );
+    }
+  });
+
+  test("Refresh button reloads data", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("tab", { name: "Capture" }).click();
+    const panel = page.getByTestId("frames-panel");
+    await expect(panel).toBeVisible({ timeout: 10000 });
+
+    // Click refresh
+    await panel.getByRole("button", { name: "Refresh" }).click();
+
+    // Should still show frames after refresh
+    await expect(panel.getByTestId("frame-card").first()).toBeVisible({ timeout: 10000 });
+  });
+
+  test("pagination navigates between pages", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("tab", { name: "Capture" }).click();
+    const panel = page.getByTestId("frames-panel");
+    await expect(panel).toBeVisible({ timeout: 10000 });
+
+    const pagination = page.getByTestId("pagination");
+    // Only test pagination if there are multiple pages
+    const nextBtn = pagination.getByRole("button", { name: "Next" });
+    if (await nextBtn.isEnabled()) {
+      await nextBtn.click();
+      // After clicking next, Prev should be enabled
+      await expect(pagination.getByRole("button", { name: "Prev" })).toBeEnabled();
+      await page.screenshot({ path: "tests/screenshots/capture-page2.png", fullPage: true });
     }
   });
 });
