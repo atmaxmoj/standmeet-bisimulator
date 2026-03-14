@@ -4,6 +4,7 @@ import { FramesPanel } from "@/components/FramesPanel";
 import { AudioPanel } from "@/components/AudioPanel";
 import { EpisodesPanel } from "@/components/EpisodesPanel";
 import { PlaybooksPanel } from "@/components/PlaybooksPanel";
+import { OsEventsPanel } from "@/components/OsEventsPanel";
 import { UsagePanel } from "@/components/UsagePanel";
 import { api } from "@/lib/api";
 
@@ -63,6 +64,7 @@ export default function App() {
           <TabsList>
             <TabsTrigger value="frames">Capture</TabsTrigger>
             <TabsTrigger value="audio">Audio</TabsTrigger>
+            <TabsTrigger value="os-events">OS Events</TabsTrigger>
             <TabsTrigger value="episodes">Episodes</TabsTrigger>
             <TabsTrigger value="playbooks">Playbook</TabsTrigger>
             <TabsTrigger value="usage">Usage</TabsTrigger>
@@ -70,6 +72,7 @@ export default function App() {
           <div className="mt-4">
             <TabsContent value="frames"><FramesPanel /></TabsContent>
             <TabsContent value="audio"><AudioPanel /></TabsContent>
+            <TabsContent value="os-events"><OsEventsPanel /></TabsContent>
             <TabsContent value="episodes"><EpisodesPanel /></TabsContent>
             <TabsContent value="playbooks"><PlaybooksPanel /></TabsContent>
             <TabsContent value="usage"><UsagePanel /></TabsContent>

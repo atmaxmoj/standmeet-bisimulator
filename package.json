@@ -11,6 +11,7 @@
     "logs": "uv run python cli.py logs",
     "rebuild": "uv run python cli.py rebuild",
     "test": "uv run python cli.py test",
+    "test:capture": "uv run python cli.py test capture",
     "test:audio": "uv run python cli.py test audio",
     "test:web": "uv run python cli.py test web"
   }

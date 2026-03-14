@@ -281,13 +281,21 @@ def cmd_logs():
 
 def cmd_test():
     """Run tests. Usage: npm test [-- <suite>]
-    Suites: audio, web, all (default: all)
+    Suites: capture, audio, web, all (default: all)
     """
     suite = sys.argv[2] if len(sys.argv) > 2 else "all"
     results = []
 
+    extra = platform_extra()
+
+    if suite in ("capture", "all") and extra:
+        print("==> Running capture pytest...")
+        r = run(["uv", "run", "--extra", extra, "--extra", "test", "pytest", "-v"],
+                cwd=ROOT / "capture")
+        results.append(("capture", r.returncode))
+
     if suite in ("audio", "all"):
-        print("==> Running audio pytest...")
+        print("\n==> Running audio pytest...")
         r = run(["uv", "run", "--extra", "test", "pytest", "-v"], cwd=ROOT / "audio")
         results.append(("audio", r.returncode))
 
@@ -297,7 +305,7 @@ def cmd_test():
         results.append(("web", r.returncode))
 
     if not results:
-        print(f"Unknown suite: {suite}. Available: audio, web, all")
+        print(f"Unknown suite: {suite}. Available: capture, audio, web, all")
         sys.exit(1)
 
     failed = [name for name, rc in results if rc != 0]

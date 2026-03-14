@@ -19,6 +19,18 @@ CREATE TABLE IF NOT EXISTS frames (
 );
 
 CREATE INDEX IF NOT EXISTS idx_frames_id ON frames(id);
+
+CREATE TABLE IF NOT EXISTS os_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT '',
+    data TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_os_events_id ON os_events(id);
+CREATE INDEX IF NOT EXISTS idx_os_events_type ON os_events(event_type);
 """
 
 
@@ -62,6 +74,36 @@ class CaptureDB:
             row_id, display_id, app_name, image_hash[:12], len(text),
         )
         return row_id
+
+    def insert_os_event(
+        self,
+        timestamp: str,
+        event_type: str,
+        source: str,
+        data: str,
+    ) -> int:
+        cursor = self._conn.execute(
+            "INSERT INTO os_events (timestamp, event_type, source, data) "
+            "VALUES (?, ?, ?, ?)",
+            (timestamp, event_type, source, data),
+        )
+        self._conn.commit()
+        row_id = cursor.lastrowid
+        logger.debug(
+            "inserted os_event id=%d type=%s source=%s data_len=%d",
+            row_id, event_type, source, len(data),
+        )
+        return row_id
+
+    def get_last_os_event_data(self, event_type: str, source: str) -> str | None:
+        """Get the data of the most recent os_event for dedup."""
+        cursor = self._conn.execute(
+            "SELECT data FROM os_events WHERE event_type = ? AND source = ? "
+            "ORDER BY id DESC LIMIT 1",
+            (event_type, source),
+        )
+        row = cursor.fetchone()
+        return row[0] if row else None
 
     def get_last_hash(self, display_id: int) -> str | None:
         cursor = self._conn.execute(

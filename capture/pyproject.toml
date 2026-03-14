@@ -17,6 +17,7 @@ windows = [
     "Pillow>=10.0",
     "rapidocr-onnxruntime>=1.3",
 ]
+test = ["pytest>=8.0"]
 
 [build-system]
 requires = ["hatchling"]
@@ -24,3 +25,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/capture"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -41,6 +41,14 @@ export interface Episode {
   created_at: string;
 }
 
+export interface OsEvent {
+  id: number;
+  timestamp: string;
+  event_type: string;
+  source: string;
+  data: string;
+}
+
 export interface Playbook {
   id: number;
   name: string;
@@ -89,6 +97,10 @@ export const api = {
   episodes: (limit = 20, offset = 0) =>
     get<{ episodes: Episode[]; total: number }>(`/memory/episodes/?limit=${limit}&offset=${offset}`),
   playbooks: () => get<{ playbooks: Playbook[] }>("/memory/playbooks/"),
+  osEvents: (limit = 50, offset = 0, eventType = "") =>
+    get<{ events: OsEvent[]; total: number }>(
+      `/capture/os-events?limit=${limit}&offset=${offset}${eventType ? `&event_type=${eventType}` : ""}`
+    ),
   usage: (days = 30) => get<UsageSummary>(`/engine/usage?days=${days}`),
   distill: () => post<{ playbook_entries_updated: number }>("/engine/distill"),
 };

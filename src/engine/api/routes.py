@@ -122,6 +122,49 @@ async def list_audio_frames(request: Request, limit: int = 50, offset: int = 0):
     return {"audio": rows, "total": total}
 
 
+@router.get("/capture/os-events")
+async def list_os_events(
+    request: Request,
+    limit: int = 50,
+    offset: int = 0,
+    event_type: str = "",
+):
+    """Get OS events (shell commands, browser URLs) from capture DB."""
+    capture_db_path = request.app.state.settings.capture_db_path
+    if not Path(capture_db_path).exists():
+        return {"events": [], "total": 0}
+
+    async with aiosqlite.connect(
+        f"file:{capture_db_path}?mode=ro", uri=True
+    ) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='os_events'"
+        ) as cur:
+            if not await cur.fetchone():
+                return {"events": [], "total": 0}
+
+        where = ""
+        params: list = []
+        if event_type:
+            where = "WHERE event_type = ?"
+            params.append(event_type)
+
+        async with db.execute(
+            f"SELECT COUNT(*) FROM os_events {where}", params
+        ) as cur:
+            total = (await cur.fetchone())[0]
+
+        async with db.execute(
+            f"SELECT id, timestamp, event_type, source, data "
+            f"FROM os_events {where} ORDER BY id DESC LIMIT ? OFFSET ?",
+            params + [limit, offset],
+        ) as cur:
+            rows = [dict(r) for r in await cur.fetchall()]
+
+    return {"events": rows, "total": total}
+
+
 # -- Test helper: manually ingest events --
 
 
