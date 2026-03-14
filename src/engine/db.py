@@ -124,6 +124,10 @@ class DB:
             rows = await cur.fetchall()
             return [dict(r) for r in rows]
 
+    async def count_episodes(self) -> int:
+        async with self._conn.execute("SELECT COUNT(*) FROM episodes") as cur:
+            return (await cur.fetchone())[0]
+
     # -- playbook entries --
 
     async def upsert_playbook(

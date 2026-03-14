@@ -18,7 +18,8 @@ router = APIRouter()
 async def list_episodes(request: Request, limit: int = 50, offset: int = 0):
     db = request.app.state.db
     episodes = await db.get_all_episodes(limit=limit, offset=offset)
-    return {"episodes": episodes}
+    total = await db.count_episodes()
+    return {"episodes": episodes, "total": total}
 
 
 # -- Memory Protocol: playbooks --
@@ -75,6 +76,9 @@ async def list_capture_frames(request: Request, limit: int = 50, offset: int = 0
         f"file:{capture_db_path}?mode=ro", uri=True
     ) as db:
         db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT COUNT(*) FROM frames") as cur:
+            total = (await cur.fetchone())[0]
+
         async with db.execute(
             "SELECT id, timestamp, app_name, window_name, "
             "substr(text, 1, 500) as text, display_id, image_hash "
@@ -83,7 +87,7 @@ async def list_capture_frames(request: Request, limit: int = 50, offset: int = 0
         ) as cur:
             rows = [dict(r) for r in await cur.fetchall()]
 
-    return {"frames": rows}
+    return {"frames": rows, "total": total}
 
 
 @router.get("/capture/audio")
@@ -104,6 +108,9 @@ async def list_audio_frames(request: Request, limit: int = 50, offset: int = 0):
             if not await cur.fetchone():
                 return {"audio": []}
 
+        async with db.execute("SELECT COUNT(*) FROM audio_frames") as cur:
+            total = (await cur.fetchone())[0]
+
         async with db.execute(
             "SELECT id, timestamp, duration_seconds, text, language "
             "FROM audio_frames ORDER BY id DESC LIMIT ? OFFSET ?",
@@ -111,7 +118,7 @@ async def list_audio_frames(request: Request, limit: int = 50, offset: int = 0):
         ) as cur:
             rows = [dict(r) for r in await cur.fetchall()]
 
-    return {"audio": rows}
+    return {"audio": rows, "total": total}
 
 
 # -- Test helper: manually ingest events --

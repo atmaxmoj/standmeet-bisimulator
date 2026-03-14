@@ -4,6 +4,7 @@ import { timeAgo, fmtTime } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Pagination } from "@/components/Pagination";
 
 const PAGE_SIZE = 30;
 
@@ -11,14 +12,16 @@ export function AudioPanel() {
   const [frames, setFrames] = useState<AudioFrame[]>([]);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(true);
+  const [total, setTotal] = useState(0);
+
+  const totalPages = Math.ceil(total / PAGE_SIZE);
 
   const load = async (p: number) => {
     setLoading(true);
     try {
       const data = await api.audio(PAGE_SIZE, (p - 1) * PAGE_SIZE);
       setFrames(data.audio ?? []);
-      setHasMore((data.audio ?? []).length === PAGE_SIZE);
+      setTotal(data.total ?? 0);
       setPage(p);
     } catch (e) {
       console.error(e);
@@ -31,15 +34,7 @@ export function AudioPanel() {
   return (
     <div className="space-y-4" data-testid="audio-panel">
       <div className="flex justify-between items-center">
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground" data-testid="page-indicator">Page {page}</span>
-          <Button variant="outline" size="sm" onClick={() => load(page - 1)} disabled={page <= 1}>
-            Prev
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => load(page + 1)} disabled={!hasMore}>
-            Next
-          </Button>
-        </div>
+        <Pagination page={page} totalPages={totalPages} onPageChange={load} />
         <Button variant="outline" size="sm" onClick={() => load(1)}>
           Refresh
         </Button>

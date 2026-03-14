@@ -82,11 +82,11 @@ export interface Status {
 export const api = {
   status: () => get<Status>("/engine/status"),
   frames: (limit = 30, offset = 0) =>
-    get<{ frames: Frame[] }>(`/capture/frames?limit=${limit}&offset=${offset}`),
+    get<{ frames: Frame[]; total: number }>(`/capture/frames?limit=${limit}&offset=${offset}`),
   audio: (limit = 30, offset = 0) =>
-    get<{ audio: AudioFrame[] }>(`/capture/audio?limit=${limit}&offset=${offset}`),
+    get<{ audio: AudioFrame[]; total: number }>(`/capture/audio?limit=${limit}&offset=${offset}`),
   episodes: (limit = 20, offset = 0) =>
-    get<{ episodes: Episode[] }>(`/memory/episodes/?limit=${limit}&offset=${offset}`),
+    get<{ episodes: Episode[]; total: number }>(`/memory/episodes/?limit=${limit}&offset=${offset}`),
   playbooks: () => get<{ playbooks: Playbook[] }>("/memory/playbooks/"),
   usage: (days = 30) => get<UsageSummary>(`/engine/usage?days=${days}`),
   distill: () => post<{ playbook_entries_updated: number }>("/engine/distill"),
