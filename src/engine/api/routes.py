@@ -1,7 +1,9 @@
 """Memory Protocol REST endpoints + engine management."""
 
 import logging
+from pathlib import Path
 
+import aiosqlite
 from fastapi import APIRouter, Request
 
 logger = logging.getLogger(__name__)
@@ -57,6 +59,59 @@ async def trigger_distill(request: Request):
     db = request.app.state.db
     count = await weekly_distill(client, db)
     return {"playbook_entries_updated": count}
+
+
+# -- Capture frames (raw data from capture daemon) --
+
+
+@router.get("/capture/frames")
+async def list_capture_frames(request: Request, limit: int = 50, offset: int = 0):
+    """Get recent screen capture frames from capture DB."""
+    capture_db_path = request.app.state.settings.capture_db_path
+    if not Path(capture_db_path).exists():
+        return {"frames": [], "error": "capture DB not found"}
+
+    async with aiosqlite.connect(
+        f"file:{capture_db_path}?mode=ro", uri=True
+    ) as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT id, timestamp, app_name, window_name, "
+            "substr(text, 1, 500) as text, display_id, image_hash "
+            "FROM frames ORDER BY id DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        ) as cur:
+            rows = [dict(r) for r in await cur.fetchall()]
+
+    return {"frames": rows}
+
+
+@router.get("/capture/audio")
+async def list_audio_frames(request: Request, limit: int = 50, offset: int = 0):
+    """Get recent audio transcriptions from capture DB."""
+    capture_db_path = request.app.state.settings.capture_db_path
+    if not Path(capture_db_path).exists():
+        return {"audio": [], "error": "capture DB not found"}
+
+    async with aiosqlite.connect(
+        f"file:{capture_db_path}?mode=ro", uri=True
+    ) as db:
+        db.row_factory = aiosqlite.Row
+        # Check if table exists
+        async with db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='audio_frames'"
+        ) as cur:
+            if not await cur.fetchone():
+                return {"audio": []}
+
+        async with db.execute(
+            "SELECT id, timestamp, duration_seconds, text, language "
+            "FROM audio_frames ORDER BY id DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        ) as cur:
+            rows = [dict(r) for r in await cur.fetchall()]
+
+    return {"audio": rows}
 
 
 # -- Test helper: manually ingest events --

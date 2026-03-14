@@ -14,5 +14,13 @@ services:
       - DB_PATH=/data/engine.db
     restart: unless-stopped
 
+  web:
+    build: ./web
+    ports:
+      - "5174:80"
+    depends_on:
+      - engine
+    restart: unless-stopped
+
 volumes:
   engine-data:

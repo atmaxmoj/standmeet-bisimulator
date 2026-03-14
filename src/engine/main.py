@@ -129,6 +129,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Bisimulator", lifespan=lifespan)
 
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 from engine.api.routes import router  # noqa: E402
 
 app.include_router(router)
