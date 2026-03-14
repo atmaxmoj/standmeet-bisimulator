@@ -161,3 +161,73 @@ async def poll_native_capture(
             logger.exception("error polling native capture")
 
         await asyncio.sleep(interval)
+
+
+# ---------------------------------------------------------------------------
+# Audio collector (reads transcribed audio from capture DB)
+# ---------------------------------------------------------------------------
+
+
+async def poll_audio(
+    db: DB,
+    capture_db_path: str,
+    interval: int,
+    on_frames: "asyncio.Queue[list[Frame]]",
+):
+    cursor_key = "audio_cursor"
+    logger.info("audio collector started, db=%s, interval=%ds", capture_db_path, interval)
+
+    while True:
+        try:
+            if not Path(capture_db_path).exists():
+                logger.info(
+                    "capture DB not found at %s, waiting %ds...", capture_db_path, interval * 6
+                )
+                await asyncio.sleep(interval * 6)
+                continue
+
+            cursor = await db.get_state(cursor_key, 0)
+            logger.debug("polling audio from cursor=%d", cursor)
+
+            async with aiosqlite.connect(
+                f"file:{capture_db_path}?mode=ro", uri=True
+            ) as cap_db:
+                cap_db.row_factory = aiosqlite.Row
+                # Check if audio_frames table exists
+                async with cap_db.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='audio_frames'"
+                ) as cur:
+                    if not await cur.fetchone():
+                        logger.debug("audio_frames table not found yet, waiting")
+                        await asyncio.sleep(interval * 6)
+                        continue
+
+                async with cap_db.execute(
+                    "SELECT id, timestamp, duration_seconds, text, language "
+                    "FROM audio_frames WHERE id > ? ORDER BY id LIMIT 100",
+                    (cursor,),
+                ) as cur:
+                    rows = await cur.fetchall()
+
+            logger.debug("audio query returned %d rows", len(rows))
+
+            if rows:
+                frames = [
+                    Frame(
+                        id=r["id"],
+                        source="audio",
+                        text=r["text"] or "",
+                        app_name="microphone",
+                        window_name=f"audio/{r['language'] or 'unknown'}",
+                        timestamp=r["timestamp"] or "",
+                    )
+                    for r in rows
+                ]
+                await on_frames.put(frames)
+                await db.set_state(cursor_key, frames[-1].id)
+                logger.debug("polled %d audio frames, new cursor=%d", len(frames), frames[-1].id)
+
+        except Exception:
+            logger.exception("error polling audio")
+
+        await asyncio.sleep(interval)

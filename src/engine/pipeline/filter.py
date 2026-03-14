@@ -30,6 +30,12 @@ MIN_TEXT_LENGTH = 10
 
 
 def should_keep(frame: Frame) -> bool:
+    # Audio frames always pass through (already transcribed, no noise filtering needed)
+    if frame.source == "audio":
+        if not frame.text or not frame.text.strip():
+            logger.debug("filtered out audio frame id=%d (empty text)", frame.id)
+            return False
+        return True
     if frame.app_name in IGNORE_APPS:
         logger.debug("filtered out frame id=%d app=%s (ignored app)", frame.id, frame.app_name)
         return False

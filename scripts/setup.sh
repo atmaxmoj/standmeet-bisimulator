@@ -6,12 +6,6 @@ OS="$(uname -s)"
 echo "==> Detected OS: $OS"
 
 # --- Check prerequisites ---
-if [ "$OS" != "Darwin" ]; then
-    echo "==> ERROR: Native capture daemon only supports macOS."
-    echo "   On Linux, install screenpipe manually and bisimulator will read from it."
-    exit 1
-fi
-
 if ! command -v docker >/dev/null 2>&1; then
     echo "==> ERROR: Docker not found. Install Docker Desktop first."
     exit 1
@@ -34,25 +28,49 @@ if [ ! -f "$SCRIPT_DIR/.env" ]; then
     exit 1
 fi
 
-# --- Install capture daemon deps ---
-echo "==> Installing capture daemon dependencies..."
-cd "$SCRIPT_DIR/capture"
+mkdir -p ~/.bisimulator
+
+# --- Install + start capture daemon (macOS only) ---
+if [ "$OS" = "Darwin" ]; then
+    echo "==> Installing capture daemon dependencies..."
+    cd "$SCRIPT_DIR/capture"
+    uv sync
+
+    if pgrep -f "python -m capture" >/dev/null 2>&1; then
+        echo "==> Capture daemon already running"
+    else
+        echo "==> Starting capture daemon..."
+        uv run python -m capture > /tmp/bisimulator-capture.log 2>&1 &
+        sleep 2
+        if pgrep -f "python -m capture" >/dev/null 2>&1; then
+            echo "==> Capture daemon started (pid $(pgrep -f 'python -m capture'))"
+        else
+            echo "==> WARNING: Capture daemon failed to start. Check /tmp/bisimulator-capture.log"
+            tail -20 /tmp/bisimulator-capture.log 2>/dev/null
+            echo "==> Continuing without screen capture..."
+        fi
+    fi
+else
+    echo "==> Skipping capture daemon (macOS only). Install screenpipe manually on Linux."
+fi
+
+# --- Install + start audio daemon (cross-platform) ---
+echo "==> Installing audio daemon dependencies..."
+cd "$SCRIPT_DIR/audio"
 uv sync
 
-# --- Start capture daemon ---
-if pgrep -f "python -m capture" >/dev/null 2>&1; then
-    echo "==> Capture daemon already running"
+if pgrep -f "python -m audio" >/dev/null 2>&1; then
+    echo "==> Audio daemon already running"
 else
-    echo "==> Starting capture daemon..."
-    mkdir -p ~/.bisimulator
-    uv run python -m capture > /tmp/bisimulator-capture.log 2>&1 &
-    sleep 2
-    if pgrep -f "python -m capture" >/dev/null 2>&1; then
-        echo "==> Capture daemon started (pid $(pgrep -f 'python -m capture'))"
+    echo "==> Starting audio daemon..."
+    uv run python -m audio > /tmp/bisimulator-audio.log 2>&1 &
+    sleep 3
+    if pgrep -f "python -m audio" >/dev/null 2>&1; then
+        echo "==> Audio daemon started (pid $(pgrep -f 'python -m audio'))"
     else
-        echo "==> ERROR: Capture daemon failed to start. Check /tmp/bisimulator-capture.log"
-        tail -20 /tmp/bisimulator-capture.log 2>/dev/null
-        exit 1
+        echo "==> WARNING: Audio daemon failed to start. Check /tmp/bisimulator-audio.log"
+        tail -20 /tmp/bisimulator-audio.log 2>/dev/null
+        echo "==> Continuing without audio capture..."
     fi
 fi
 
@@ -64,6 +82,8 @@ docker compose up --build -d
 echo ""
 echo "==> Done!"
 echo "    API:      http://localhost:5001"
+echo "    Usage:    http://localhost:5001/engine/usage"
 echo "    Logs:     docker compose logs -f"
 echo "    Capture:  tail -f /tmp/bisimulator-capture.log"
+echo "    Audio:    tail -f /tmp/bisimulator-audio.log"
 echo "    Status:   make status"

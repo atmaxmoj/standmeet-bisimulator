@@ -10,7 +10,7 @@ from fastapi import FastAPI
 
 from engine.config import Settings
 from engine.db import DB
-from engine.pipeline.collector import Frame, poll_native_capture, poll_screenpipe
+from engine.pipeline.collector import Frame, poll_audio, poll_native_capture, poll_screenpipe
 from engine.pipeline.episode import process_window
 from engine.pipeline.filter import WindowAccumulator
 
@@ -43,10 +43,18 @@ async def pipeline_loop(
     )
 
     # Start all collectors — each pushes to the same queue.
-    # Both collectors gracefully wait if their DB doesn't exist.
+    # All collectors gracefully wait if their DB doesn't exist.
     collectors = [
         asyncio.create_task(
             poll_native_capture(
+                db=db,
+                capture_db_path=settings.capture_db_path,
+                interval=settings.poll_interval_seconds,
+                on_frames=frame_queue,
+            )
+        ),
+        asyncio.create_task(
+            poll_audio(
                 db=db,
                 capture_db_path=settings.capture_db_path,
                 interval=settings.poll_interval_seconds,
