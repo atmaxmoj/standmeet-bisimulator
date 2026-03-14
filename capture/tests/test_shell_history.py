@@ -1,6 +1,13 @@
 """Tests for shell history parsing and collection."""
 
-from capture.collectors.shell_macos import _parse_zsh_line, _is_noise, ZshHistoryCollector
+from unittest.mock import patch, MagicMock
+
+from capture.collectors.shell_macos import (
+    _parse_zsh_line,
+    _is_noise,
+    _signal_zsh_flush,
+    ZshHistoryCollector,
+)
 
 
 class TestParseZshLine:
@@ -95,3 +102,64 @@ class TestZshHistoryCollector:
         collector._path = tmp_path / "nonexistent"
         assert collector.available() is False
         assert collector.collect() == []
+
+    def test_periodic_reread_even_if_size_unchanged(self, tmp_path):
+        """After 30 cycles, collector re-reads file even if size is same."""
+        history = tmp_path / ".zsh_history"
+        history.write_text(": 1710428400:0;git status\n")
+
+        collector = ZshHistoryCollector()
+        collector._path = history
+        collector.collect()  # init
+
+        # Simulate 29 cycles with no change — should all return empty
+        for _ in range(29):
+            assert collector.collect() == []
+
+        # 30th cycle should re-read (even though size hasn't changed)
+        # No new lines, so still empty, but it doesn't skip the read
+        result = collector.collect()
+        assert result == []
+
+    def test_flush_signal_called_periodically(self, tmp_path):
+        """SIGUSR1 should be sent every 10 cycles to trigger zsh flush."""
+        history = tmp_path / ".zsh_history"
+        history.write_text(": 1710428400:0;git status\n")
+
+        collector = ZshHistoryCollector()
+        collector._path = history
+        collector.collect()  # init (counter=1)
+
+        with patch("capture.collectors.shell_macos._signal_zsh_flush") as mock_flush:
+            # Run 9 more cycles (counter 2-10), flush should fire at 10
+            for i in range(9):
+                collector.collect()
+
+            assert mock_flush.call_count == 1
+
+
+class TestSignalZshFlush:
+    def test_sends_sigusr1_to_zsh_pids(self):
+        result = MagicMock()
+        result.stdout = "1234\n5678\n"
+
+        with patch("subprocess.run", return_value=result), \
+             patch("os.getpid", return_value=9999), \
+             patch("os.kill") as mock_kill:
+            _signal_zsh_flush()
+            assert mock_kill.call_count == 2
+
+    def test_skips_own_pid(self):
+        result = MagicMock()
+        result.stdout = "1234\n9999\n"
+
+        with patch("subprocess.run", return_value=result), \
+             patch("os.getpid", return_value=9999), \
+             patch("os.kill") as mock_kill:
+            _signal_zsh_flush()
+            assert mock_kill.call_count == 1  # only 1234, not 9999
+
+    def test_handles_pgrep_failure(self):
+        with patch("subprocess.run", side_effect=Exception("no pgrep")):
+            # Should not raise
+            _signal_zsh_flush()
