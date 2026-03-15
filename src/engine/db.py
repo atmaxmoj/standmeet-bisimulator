@@ -466,6 +466,22 @@ class DB:
             rows = [dict(r) for r in await cur.fetchall()]
         return rows, total
 
+    # -- batch delete --
+
+    async def delete_rows(self, table: str, ids: list[int]) -> int:
+        """Delete rows by IDs from an allowed table. Returns count deleted."""
+        allowed = {"frames", "audio_frames", "os_events", "episodes", "playbook_entries"}
+        if table not in allowed:
+            raise ValueError(f"delete not allowed on table: {table}")
+        if not ids:
+            return 0
+        placeholders = ",".join("?" * len(ids))
+        async with self._conn.execute(
+            f"DELETE FROM {table} WHERE id IN ({placeholders})", ids
+        ) as cur:
+            await self._conn.commit()
+            return cur.rowcount
+
     # -- stats --
 
     async def get_status(self) -> dict:

@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api, type Episode } from "@/lib/api";
 import { fmtTime, timeAgo } from "@/lib/utils";
+import { useSelection } from "@/hooks/useSelection";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Pagination } from "@/components/Pagination";
@@ -24,27 +25,34 @@ export function EpisodesPanel() {
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
-  const load = async (p: number) => {
+  const load = useCallback(async (p?: number) => {
+    const target = p ?? page;
     setLoading(true);
     try {
-      const data = await api.episodes(PAGE_SIZE, (p - 1) * PAGE_SIZE);
+      const data = await api.episodes(PAGE_SIZE, (target - 1) * PAGE_SIZE);
       setEpisodes(data.episodes);
       setTotal(data.total ?? 0);
-      setPage(p);
-    } catch (e) {
-      console.error(e);
-    }
+      setPage(target);
+    } catch (e) { console.error(e); }
     setLoading(false);
-  };
+  }, [page]);
 
-  useEffect(() => { load(1); }, []);
+  const sel = useSelection("episodes", () => load());
+  useEffect(() => { load(1); }, [load]);
 
   return (
     <div className="space-y-4 pb-16" data-testid="episodes-panel">
-      <div className="flex justify-end">
-        <Button variant="outline" size="sm" onClick={() => load(1)}>
-          Refresh
-        </Button>
+      <div className="flex justify-between">
+        <div className="flex gap-2">
+          <input type="checkbox" checked={episodes.length > 0 && episodes.every((e) => sel.selected.has(e.id))}
+            onChange={() => sel.toggleAll(episodes.map((e) => e.id))} />
+          {sel.selected.size > 0 && (
+            <Button variant="destructive" size="sm" onClick={sel.deleteSelected} disabled={sel.deleting}>
+              Delete {sel.selected.size}
+            </Button>
+          )}
+        </div>
+        <Button variant="outline" size="sm" onClick={() => load(1)}>Refresh</Button>
       </div>
 
       {loading ? (
@@ -59,8 +67,11 @@ export function EpisodesPanel() {
           {episodes.map((e) => (
             <Card key={e.id} data-testid="episode-card">
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-normal">{parseSummary(e.summary)}</CardTitle>
-                <CardDescription className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                <CardTitle className="text-sm font-normal flex items-start gap-2">
+                  <input type="checkbox" checked={sel.selected.has(e.id)} onChange={() => sel.toggle(e.id)} className="mt-1 shrink-0" />
+                  <span>{parseSummary(e.summary)}</span>
+                </CardTitle>
+                <CardDescription className="flex flex-wrap gap-x-4 gap-y-1 text-xs pl-6">
                   <span data-testid="episode-id">#{e.id}</span>
                   <span>{e.app_names}</span>
                   <span>{e.frame_count} frames</span>

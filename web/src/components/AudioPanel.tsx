@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api, type AudioFrame } from "@/lib/api";
 import { timeAgo, fmtTime } from "@/lib/utils";
+import { useSelection } from "@/hooks/useSelection";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -16,27 +17,34 @@ export function AudioPanel() {
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
-  const load = async (p: number) => {
+  const load = useCallback(async (p?: number) => {
+    const target = p ?? page;
     setLoading(true);
     try {
-      const data = await api.audio(PAGE_SIZE, (p - 1) * PAGE_SIZE);
+      const data = await api.audio(PAGE_SIZE, (target - 1) * PAGE_SIZE);
       setFrames(data.audio ?? []);
       setTotal(data.total ?? 0);
-      setPage(p);
-    } catch (e) {
-      console.error(e);
-    }
+      setPage(target);
+    } catch (e) { console.error(e); }
     setLoading(false);
-  };
+  }, [page]);
 
-  useEffect(() => { load(1); }, []);
+  const sel = useSelection("audio_frames", () => load());
+  useEffect(() => { load(1); }, [load]);
 
   return (
     <div className="space-y-4 pb-16" data-testid="audio-panel">
-      <div className="flex justify-end">
-        <Button variant="outline" size="sm" onClick={() => load(1)}>
-          Refresh
-        </Button>
+      <div className="flex justify-between">
+        <div className="flex gap-2">
+          <input type="checkbox" checked={frames.length > 0 && frames.every((f) => sel.selected.has(f.id))}
+            onChange={() => sel.toggleAll(frames.map((f) => f.id))} />
+          {sel.selected.size > 0 && (
+            <Button variant="destructive" size="sm" onClick={sel.deleteSelected} disabled={sel.deleting}>
+              Delete {sel.selected.size}
+            </Button>
+          )}
+        </div>
+        <Button variant="outline" size="sm" onClick={() => load(1)}>Refresh</Button>
       </div>
 
       {loading ? (
@@ -52,6 +60,7 @@ export function AudioPanel() {
             <Card key={a.id} data-testid="audio-card">
               <CardContent className="p-3">
                 <div className="flex items-center gap-3 mb-2">
+                  <input type="checkbox" checked={sel.selected.has(a.id)} onChange={() => sel.toggle(a.id)} />
                   <span className="text-xs text-muted-foreground">{fmtTime(a.timestamp)}</span>
                   <span className="text-[10px] text-muted-foreground/60">{timeAgo(a.timestamp)}</span>
                   <Badge variant={a.source === "speaker" ? "default" : "outline"}>

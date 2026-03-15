@@ -6,8 +6,13 @@ async function get<T>(path: string): Promise<T> {
   return res.json();
 }
 
-async function post<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { method: "POST" });
+async function post<T>(path: string, body?: unknown): Promise<T> {
+  const opts: RequestInit = { method: "POST" };
+  if (body !== undefined) {
+    opts.headers = { "Content-Type": "application/json" };
+    opts.body = JSON.stringify(body);
+  }
+  const res = await fetch(`${BASE}${path}`, opts);
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
   return res.json();
 }
@@ -122,6 +127,8 @@ export const api = {
   logs: (limit = 20, offset = 0) =>
     get<{ logs: PipelineLog[]; total: number }>(`/engine/logs?limit=${limit}&offset=${offset}`),
   distill: () => post<{ playbook_entries_updated: number }>("/engine/distill"),
+  batchDelete: (table: string, ids: number[]) =>
+    post<{ deleted: number }>("/batch/delete", { table, ids }),
   pipeline: () => get<{ paused: boolean }>("/engine/pipeline"),
   pipelinePause: () => post<{ paused: boolean }>("/engine/pipeline/pause"),
   pipelineResume: () => post<{ paused: boolean }>("/engine/pipeline/resume"),

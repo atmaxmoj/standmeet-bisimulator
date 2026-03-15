@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api, frameImageUrl, type Frame } from "@/lib/api";
 import { timeAgo, fmtTime } from "@/lib/utils";
+import { useSelection } from "@/hooks/useSelection";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -8,11 +9,14 @@ import { Pagination } from "@/components/Pagination";
 
 const PAGE_SIZE = 30;
 
-function FrameCard({ frame, expanded, onToggle }: { frame: Frame; expanded: boolean; onToggle: () => void }) {
+function FrameCard({ frame, expanded, checked, onToggle, onCheck }: {
+  frame: Frame; expanded: boolean; checked: boolean; onToggle: () => void; onCheck: () => void;
+}) {
   return (
     <Card className="cursor-pointer hover:bg-accent/50 transition-colors" onClick={onToggle} data-testid="frame-card">
       <CardContent className="p-3">
-        <div className="flex items-start gap-4">
+        <div className="flex items-start gap-3">
+          <input type="checkbox" checked={checked} onChange={onCheck} onClick={(e) => e.stopPropagation()} className="mt-1 shrink-0" />
           <div className="shrink-0 w-40">
             <div className="text-xs text-muted-foreground">{fmtTime(frame.timestamp)}</div>
             <div className="text-[10px] text-muted-foreground/60">{timeAgo(frame.timestamp)}</div>
@@ -43,22 +47,22 @@ export function FramesPanel() {
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
-  const load = async (p: number) => {
+  const load = useCallback(async (p?: number) => {
+    const target = p ?? page;
     setLoading(true);
     try {
-      const data = await api.frames(PAGE_SIZE, (p - 1) * PAGE_SIZE);
+      const data = await api.frames(PAGE_SIZE, (target - 1) * PAGE_SIZE);
       setFrames(data.frames);
       setTotal(data.total ?? 0);
-      setPage(p);
-    } catch (e) {
-      console.error(e);
-    }
+      setPage(target);
+    } catch (e) { console.error(e); }
     setLoading(false);
-  };
+  }, [page]);
 
-  useEffect(() => { load(1); }, []);
+  const sel = useSelection("frames", () => load());
+  useEffect(() => { load(1); }, [load]);
 
-  const toggle = (id: number) => {
+  const toggleExpand = (id: number) => {
     setExpandedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
@@ -68,7 +72,16 @@ export function FramesPanel() {
 
   return (
     <div className="space-y-4 pb-16" data-testid="frames-panel">
-      <div className="flex justify-end">
+      <div className="flex justify-between">
+        <div className="flex gap-2">
+          <input type="checkbox" checked={frames.length > 0 && frames.every((f) => sel.selected.has(f.id))}
+            onChange={() => sel.toggleAll(frames.map((f) => f.id))} />
+          {sel.selected.size > 0 && (
+            <Button variant="destructive" size="sm" onClick={sel.deleteSelected} disabled={sel.deleting}>
+              Delete {sel.selected.size}
+            </Button>
+          )}
+        </div>
         <Button variant="outline" size="sm" onClick={() => load(1)}>Refresh</Button>
       </div>
       {loading ? (
@@ -78,7 +91,8 @@ export function FramesPanel() {
       ) : (
         <div className="space-y-2">
           {frames.map((f) => (
-            <FrameCard key={f.id} frame={f} expanded={expandedIds.has(f.id)} onToggle={() => toggle(f.id)} />
+            <FrameCard key={f.id} frame={f} expanded={expandedIds.has(f.id)}
+              checked={sel.selected.has(f.id)} onToggle={() => toggleExpand(f.id)} onCheck={() => sel.toggle(f.id)} />
           ))}
         </div>
       )}

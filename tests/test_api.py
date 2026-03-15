@@ -391,3 +391,39 @@ class TestPipelineLogs:
         )
         resp = await client.get("/engine/logs")
         assert resp.json()["logs"][0]["stage"] == "distill"
+
+
+@pytest.mark.asyncio
+class TestBatchDelete:
+    async def test_delete_frames(self, client, db):
+        id1 = await db.insert_frame(
+            timestamp="2026-03-14T10:00:00+00:00",
+            app_name="App", window_name="w", text="t",
+            display_id=1, image_hash="h1",
+        )
+        id2 = await db.insert_frame(
+            timestamp="2026-03-14T10:01:00+00:00",
+            app_name="App", window_name="w", text="t",
+            display_id=1, image_hash="h2",
+        )
+        resp = await client.post("/batch/delete", json={"table": "frames", "ids": [id1, id2]})
+        assert resp.json()["deleted"] == 2
+        _, total = await db.get_frames()
+        assert total == 0
+
+    async def test_delete_episodes(self, client, db):
+        eid = await db.insert_episode(
+            summary="test", app_names="App", frame_count=5,
+            started_at="2026-03-14T10:00:00", ended_at="2026-03-14T10:30:00",
+        )
+        resp = await client.post("/batch/delete", json={"table": "episodes", "ids": [eid]})
+        assert resp.json()["deleted"] == 1
+
+    async def test_delete_invalid_table(self, client):
+        resp = await client.post("/batch/delete", json={"table": "users", "ids": [1]})
+        assert resp.json()["deleted"] == 0
+        assert "error" in resp.json()
+
+    async def test_delete_empty_ids(self, client):
+        resp = await client.post("/batch/delete", json={"table": "frames", "ids": []})
+        assert resp.json()["deleted"] == 0

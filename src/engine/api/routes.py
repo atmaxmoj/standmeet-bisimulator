@@ -177,6 +177,24 @@ async def list_playbooks(request: Request):
     return {"playbooks": playbooks}
 
 
+# -- Batch delete --
+
+
+class BatchDelete(BaseModel):
+    table: str
+    ids: list[int]
+
+
+@router.post("/batch/delete")
+async def batch_delete(request: Request, body: BatchDelete):
+    db = request.app.state.db
+    try:
+        deleted = await db.delete_rows(body.table, body.ids)
+    except ValueError as e:
+        return {"error": str(e), "deleted": 0}
+    return {"deleted": deleted}
+
+
 # -- Engine management --
 
 
