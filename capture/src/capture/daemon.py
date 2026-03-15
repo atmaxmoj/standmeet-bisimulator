@@ -32,6 +32,24 @@ def _save_frame(webp_bytes: bytes, timestamp: str, display_id: int) -> str:
     return str(path.relative_to(Path(FRAMES_DIR).parent))
 
 
+def _collect_os_events(client: EngineClient, collectors: list, timestamp: str) -> int:
+    """Run all OS event collectors and push results to engine."""
+    count = 0
+    for collector in collectors:
+        try:
+            for data in collector.collect():
+                client.insert_os_event(
+                    timestamp=timestamp,
+                    event_type=collector.event_type,
+                    source=collector.source,
+                    data=data,
+                )
+                count += 1
+        except Exception:
+            logger.exception("collector %s/%s failed", collector.event_type, collector.source)
+    return count
+
+
 def run(client: EngineClient):
     """Main capture loop. Runs forever until interrupted."""
     last_hashes: dict[int, str] = {}
@@ -54,6 +72,9 @@ def run(client: EngineClient):
     )
 
     while True:
+        if client.is_paused():
+            time.sleep(CAPTURE_INTERVAL)
+            continue
         try:
             cycle_start = time.monotonic()
             displays = get_all_displays()
@@ -96,21 +117,7 @@ def run(client: EngineClient):
                 last_hashes[display_id] = current_hash
                 captured += 1
 
-            # Collect OS events
-            os_events = 0
-            for collector in collectors:
-                try:
-                    entries = collector.collect()
-                    for data in entries:
-                        client.insert_os_event(
-                            timestamp=timestamp,
-                            event_type=collector.event_type,
-                            source=collector.source,
-                            data=data,
-                        )
-                        os_events += 1
-                except Exception:
-                    logger.exception("collector %s/%s failed", collector.event_type, collector.source)
+            os_events = _collect_os_events(client, collectors, timestamp)
 
             elapsed = time.monotonic() - cycle_start
             logger.debug(

@@ -47,6 +47,10 @@ def run(client: EngineClient, recorders: list[AudioRecorder], keep_chunks: bool 
     # Main loop: process pending chunks
     while True:
         try:
+            if client.is_paused():
+                time.sleep(2)
+                continue
+
             with lock:
                 to_process = list(pending_chunks)
                 pending_chunks.clear()

@@ -345,6 +345,94 @@ def cmd_restart():
     cmd_start()
 
 
+def _launchd_plist(name: str, cwd: Path) -> str:
+    """Generate a launchd plist for a daemon."""
+    uv_path = shutil.which("uv") or "/usr/local/bin/uv"
+    label = f"com.bisimulator.{name}"
+    log = str(LOG_DIR / f"{name}.log")
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{label}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{uv_path}</string>
+        <string>run</string>
+        <string>python</string>
+        <string>-m</string>
+        <string>{name}</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>{cwd}</string>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>StandardOutPath</key>
+    <string>{log}</string>
+    <key>StandardErrorPath</key>
+    <string>{log}</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>{os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")}</string>
+    </dict>
+</dict>
+</plist>"""
+
+
+def _plist_path(name: str) -> Path:
+    return Path.home() / "Library" / "LaunchAgents" / f"com.bisimulator.{name}.plist"
+
+
+def cmd_watchdog():
+    """Install launchd plists for capture + audio with KeepAlive auto-restart."""
+    if sys.platform != "darwin":
+        sys.exit("launchd watchdog is macOS only")
+
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Stop old PID-based daemons first
+    for name in ("capture", "audio"):
+        daemon_stop(name)
+
+    daemons = [
+        ("capture", ROOT / "capture"),
+        ("audio", ROOT / "audio"),
+    ]
+
+    for name, cwd in daemons:
+        plist_dst = _plist_path(name)
+        plist_dst.parent.mkdir(parents=True, exist_ok=True)
+        plist_dst.write_text(_launchd_plist(name, cwd))
+        # Unload first (ignore errors if not loaded)
+        run(["launchctl", "unload", str(plist_dst)], capture_output=True)
+        run(["launchctl", "load", str(plist_dst)])
+        print(f"  {name}: installed + loaded ({plist_dst})")
+
+    print("\n  Daemons will auto-restart on crash.")
+    print("  Use the dashboard toggle to pause/resume capture.")
+    print("  To uninstall: npm run watchdog-off")
+
+
+def cmd_watchdog_off():
+    """Uninstall launchd plists."""
+    if sys.platform != "darwin":
+        sys.exit("launchd watchdog is macOS only")
+
+    for name in ("capture", "audio"):
+        plist = _plist_path(name)
+        if plist.exists():
+            run(["launchctl", "unload", str(plist)], capture_output=True)
+            plist.unlink()
+            print(f"  {name}: unloaded + removed")
+        else:
+            print(f"  {name}: not installed")
+
+
 COMMANDS = {
     "setup": cmd_setup,
     "start": cmd_start,
@@ -355,6 +443,8 @@ COMMANDS = {
     "logs": cmd_logs,
     "test": cmd_test,
     "rebuild": cmd_rebuild,
+    "watchdog": cmd_watchdog,
+    "watchdog-off": cmd_watchdog_off,
 }
 
 
