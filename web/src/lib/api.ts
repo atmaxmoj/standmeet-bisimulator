@@ -93,6 +93,18 @@ interface Status {
   playbook_count: number;
 }
 
+export interface PipelineLog {
+  id: number;
+  stage: string;
+  prompt: string;
+  response: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cost_usd: number;
+  created_at: string;
+}
+
 export const api = {
   status: () => get<Status>("/engine/status"),
   frames: (limit = 30, offset = 0) =>
@@ -107,6 +119,8 @@ export const api = {
       `/capture/os-events?limit=${limit}&offset=${offset}${eventType ? `&event_type=${eventType}` : ""}`
     ),
   usage: (days = 30) => get<UsageSummary>(`/engine/usage?days=${days}`),
+  logs: (limit = 20, offset = 0) =>
+    get<{ logs: PipelineLog[]; total: number }>(`/engine/logs?limit=${limit}&offset=${offset}`),
   distill: () => post<{ playbook_entries_updated: number }>("/engine/distill"),
   pipeline: () => get<{ paused: boolean }>("/engine/pipeline"),
   pipelinePause: () => post<{ paused: boolean }>("/engine/pipeline/pause"),

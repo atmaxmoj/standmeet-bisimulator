@@ -6,6 +6,7 @@ import { EpisodesPanel } from "@/components/EpisodesPanel";
 import { PlaybooksPanel } from "@/components/PlaybooksPanel";
 import { OsEventsPanel } from "@/components/OsEventsPanel";
 import { UsagePanel } from "@/components/UsagePanel";
+import { LogsPanel } from "@/components/LogsPanel";
 import { api } from "@/lib/api";
 
 function Header() {
@@ -93,6 +94,7 @@ export default function App() {
             <TabsTrigger value="episodes">Episodes</TabsTrigger>
             <TabsTrigger value="playbooks">Playbook</TabsTrigger>
             <TabsTrigger value="usage">Usage</TabsTrigger>
+            <TabsTrigger value="logs">Logs</TabsTrigger>
           </TabsList>
           <div className="mt-4">
             <TabsContent value="frames"><FramesPanel /></TabsContent>
@@ -101,6 +103,7 @@ export default function App() {
             <TabsContent value="episodes"><EpisodesPanel /></TabsContent>
             <TabsContent value="playbooks"><PlaybooksPanel /></TabsContent>
             <TabsContent value="usage"><UsagePanel /></TabsContent>
+            <TabsContent value="logs"><LogsPanel /></TabsContent>
           </div>
         </Tabs>
       </div>

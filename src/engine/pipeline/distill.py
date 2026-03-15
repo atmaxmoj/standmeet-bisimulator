@@ -1,4 +1,4 @@
-"""Weekly: Opus analyzes episodes and generates/updates playbook entries."""
+"""Daily: Opus analyzes episodes and generates/updates playbook entries."""
 
 import json
 import logging
@@ -20,7 +20,7 @@ of what someone is, but a recipe for reproducing how they behave in a specific c
 ## Existing Playbook
 {playbooks}
 
-## This week's episodes
+## Today's episodes
 {episodes}
 
 ## How to analyze
@@ -78,18 +78,18 @@ writing, and communication, that's a value, not just a habit.
 Output ONLY the JSON array, nothing else."""
 
 
-async def weekly_distill(
+async def daily_distill(
     client: LLMClient,
     db: DB,
 ) -> int:
     """
-    Run weekly distillation: episodes → playbook entries.
+    Run daily distillation: episodes → playbook entries.
     Returns number of playbook entries created/updated.
     """
-    logger.info("starting weekly distillation")
-    episodes = await db.get_recent_episodes(days=7)
+    logger.info("starting daily distillation")
+    episodes = await db.get_recent_episodes(days=1)
     if not episodes:
-        logger.info("no episodes in the past week, skipping distillation")
+        logger.info("no episodes today, skipping distillation")
         return 0
 
     existing = await db.get_all_playbooks()
@@ -130,6 +130,15 @@ async def weekly_distill(
             output_tokens=resp.output_tokens,
             cost_usd=cost_usd,
         )
+        await db.insert_pipeline_log(
+            stage="distill",
+            prompt=prompt,
+            response=resp.text,
+            model=MODEL_WEEKLY,
+            input_tokens=resp.input_tokens,
+            output_tokens=resp.output_tokens,
+            cost_usd=cost_usd,
+        )
         logger.debug("recorded usage: model=%s cost=$%.6f", MODEL_WEEKLY, cost_usd)
 
         # Parse JSON (handle markdown code fences)
@@ -165,12 +174,12 @@ async def weekly_distill(
             count += 1
 
         logger.info(
-            "Weekly distillation: %d entries from %d episodes",
+            "Daily distillation: %d entries from %d episodes",
             count,
             len(episodes),
         )
         return count
 
     except Exception:
-        logger.exception("Weekly distillation failed")
+        logger.exception("Daily distillation failed")
         return 0

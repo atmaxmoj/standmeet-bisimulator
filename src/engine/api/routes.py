@@ -194,13 +194,20 @@ async def engine_usage(request: Request, days: int = 7):
     return summary
 
 
+@router.get("/engine/logs")
+async def pipeline_logs(request: Request, limit: int = 50, offset: int = 0):
+    db = request.app.state.db
+    logs, total = await db.get_pipeline_logs(limit=limit, offset=offset)
+    return {"logs": logs, "total": total}
+
+
 @router.post("/engine/distill")
 async def trigger_distill(request: Request):
-    from engine.pipeline.distill import weekly_distill
+    from engine.pipeline.distill import daily_distill
 
     llm = request.app.state.llm
     db = request.app.state.db
-    count = await weekly_distill(llm, db)
+    count = await daily_distill(llm, db)
     return {"playbook_entries_updated": count}
 
 

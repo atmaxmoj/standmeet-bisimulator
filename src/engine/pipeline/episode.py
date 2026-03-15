@@ -158,6 +158,15 @@ async def process_window(
             output_tokens=resp.output_tokens,
             cost_usd=cost_usd,
         )
+        await db.insert_pipeline_log(
+            stage="episode",
+            prompt=prompt_text,
+            response=resp.text,
+            model=MODEL_TASK,
+            input_tokens=resp.input_tokens,
+            output_tokens=resp.output_tokens,
+            cost_usd=cost_usd,
+        )
         logger.debug("recorded usage: model=%s cost=$%.6f", MODEL_TASK, cost_usd)
 
         text = resp.text.strip()

@@ -331,12 +331,17 @@ def process_episode(
 
         _store_episodes(conn, tasks, frames)
 
-        # Record usage
+        # Record usage + log
         cost = resp.cost_usd or 0
         conn.execute(
             "INSERT INTO token_usage (model, layer, input_tokens, output_tokens, cost_usd) "
             "VALUES (?, ?, ?, ?, ?)",
             (MODEL_TASK, "episode", resp.input_tokens, resp.output_tokens, cost),
+        )
+        conn.execute(
+            "INSERT INTO pipeline_logs (stage, prompt, response, model, input_tokens, output_tokens, cost_usd) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("episode", prompt, resp.text, MODEL_TASK, resp.input_tokens, resp.output_tokens, cost),
         )
         conn.commit()
 
@@ -351,21 +356,21 @@ def process_episode(
         conn.close()
 
 
-# -- Weekly playbook distillation --
+# -- Daily playbook distillation --
 
 
-@huey.periodic_task(crontab(day_of_week="0", hour="3", minute="0"))
-def weekly_distill_task():
-    """Weekly playbook distillation with Opus. Runs Sunday 3am."""
+@huey.periodic_task(crontab(hour="3", minute="0"))
+def daily_distill_task():
+    """Daily playbook distillation with Opus. Runs every day at 3am."""
     conn = _get_conn()
     try:
         episodes = conn.execute(
-            "SELECT * FROM episodes WHERE created_at >= datetime('now', '-7 days') "
+            "SELECT * FROM episodes WHERE created_at >= datetime('now', '-1 days') "
             "ORDER BY created_at",
         ).fetchall()
 
         if not episodes:
-            logger.info("weekly distill: no episodes, skipping")
+            logger.info("daily distill: no episodes, skipping")
             return
 
         existing = conn.execute(
@@ -400,6 +405,11 @@ def weekly_distill_task():
             "INSERT INTO token_usage (model, layer, input_tokens, output_tokens, cost_usd) "
             "VALUES (?, ?, ?, ?, ?)",
             (MODEL_WEEKLY, "distill", resp.input_tokens, resp.output_tokens, cost),
+        )
+        conn.execute(
+            "INSERT INTO pipeline_logs (stage, prompt, response, model, input_tokens, output_tokens, cost_usd) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("distill", prompt, resp.text, MODEL_WEEKLY, resp.input_tokens, resp.output_tokens, cost),
         )
 
         text = resp.text.strip()
@@ -440,11 +450,11 @@ def weekly_distill_task():
 
         conn.commit()
         logger.info(
-            "weekly distill: %d entries from %d episodes, cost=$%.4f",
+            "daily distill: %d entries from %d episodes, cost=$%.4f",
             count, len(episodes), cost,
         )
 
     except Exception:
-        logger.exception("weekly distill failed")
+        logger.exception("daily distill failed")
     finally:
         conn.close()

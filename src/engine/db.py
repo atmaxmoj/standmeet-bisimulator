@@ -88,6 +88,21 @@ CREATE TABLE IF NOT EXISTS state (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS pipeline_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    stage TEXT NOT NULL,
+    prompt TEXT NOT NULL DEFAULT '',
+    response TEXT NOT NULL DEFAULT '',
+    model TEXT NOT NULL DEFAULT '',
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0,
+    cost_usd REAL NOT NULL DEFAULT 0.0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_pipeline_logs_stage ON pipeline_logs(stage);
+CREATE INDEX IF NOT EXISTS idx_pipeline_logs_created_at ON pipeline_logs(created_at);
 """
 
 
@@ -419,6 +434,37 @@ class DB:
             "by_layer": rows_by_layer,
             "by_day": rows_by_day,
         }
+
+    # -- pipeline logs --
+
+    async def insert_pipeline_log(
+        self,
+        stage: str,
+        prompt: str,
+        response: str,
+        model: str = "",
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        cost_usd: float = 0.0,
+    ) -> int:
+        async with self._conn.execute(
+            "INSERT INTO pipeline_logs (stage, prompt, response, model, input_tokens, output_tokens, cost_usd) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (stage, prompt, response, model, input_tokens, output_tokens, cost_usd),
+        ) as cur:
+            await self._conn.commit()
+            return cur.lastrowid
+
+    async def get_pipeline_logs(self, limit: int = 50, offset: int = 0) -> tuple[list[dict], int]:
+        async with self._conn.execute("SELECT COUNT(*) FROM pipeline_logs") as cur:
+            total = (await cur.fetchone())[0]
+        async with self._conn.execute(
+            "SELECT id, stage, prompt, response, model, input_tokens, output_tokens, cost_usd, created_at "
+            "FROM pipeline_logs ORDER BY id DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        ) as cur:
+            rows = [dict(r) for r in await cur.fetchall()]
+        return rows, total
 
     # -- stats --
 
