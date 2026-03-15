@@ -24,7 +24,7 @@ test.describe("Dashboard", () => {
     const pagination = page.getByTestId("pagination");
     await expect(pagination).toBeVisible();
 
-    // Click a frame card to expand it
+    // Click a frame card to select it
     await cards.first().click();
 
     await page.screenshot({ path: "tests/screenshots/capture.png", fullPage: true });

@@ -10,13 +10,13 @@ import { SelectionBar } from "@/components/SelectionBar";
 
 const PAGE_SIZE = 30;
 
-function FrameCard({ frame, expanded, selected, onToggle, onSelect }: {
-  frame: Frame; expanded: boolean; selected: boolean; onToggle: () => void; onSelect: () => void;
+function FrameCard({ frame, selected, onSelect }: {
+  frame: Frame; selected: boolean; onSelect: () => void;
 }) {
   return (
     <Card
       className={`cursor-pointer transition-colors ${selected ? "ring-1 ring-primary bg-primary/5" : "hover:bg-accent/50"}`}
-      onClick={onToggle}
+      onClick={onSelect}
       onContextMenu={(e) => { e.preventDefault(); onSelect(); }}
       data-testid="frame-card"
     >
@@ -31,13 +31,13 @@ function FrameCard({ frame, expanded, selected, onToggle, onSelect }: {
             <div className="text-[10px] text-muted-foreground truncate">{frame.window_name}</div>
             <Badge variant="secondary" className="mt-1 text-[10px]">display {frame.display_id}</Badge>
           </div>
-          <div className={`text-xs text-foreground/80 whitespace-pre-wrap break-words flex-1 ${expanded ? "" : "max-h-12 overflow-hidden"}`}>
+          <div className="text-xs text-foreground/80 whitespace-pre-wrap break-words flex-1 max-h-12 overflow-hidden">
             {frame.text}
           </div>
+          {frame.image_path && (
+            <img src={frameImageUrl(frame.id)} alt="" className="shrink-0 w-20 h-14 object-cover rounded border" loading="lazy" />
+          )}
         </div>
-        {expanded && frame.image_path && (
-          <img src={frameImageUrl(frame.id)} alt={`Screenshot ${frame.id}`} className="mt-2 w-full rounded border" loading="lazy" />
-        )}
       </CardContent>
     </Card>
   );
@@ -48,7 +48,6 @@ export function FramesPanel() {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
-  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
@@ -66,16 +65,6 @@ export function FramesPanel() {
   const sel = useSelection("frames", () => load(page));
   useEffect(() => { load(1); }, [load]);
 
-  const handleClick = (id: number) => {
-    if (sel.active) { sel.toggle(id); } else {
-      setExpandedIds((prev) => {
-        const next = new Set(prev);
-        if (next.has(id)) next.delete(id); else next.add(id);
-        return next;
-      });
-    }
-  };
-
   return (
     <div className="space-y-4 pb-16" data-testid="frames-panel">
       <div className="flex justify-end">
@@ -88,8 +77,7 @@ export function FramesPanel() {
       ) : (
         <div className="space-y-2">
           {frames.map((f) => (
-            <FrameCard key={f.id} frame={f} expanded={expandedIds.has(f.id)} selected={sel.selected.has(f.id)}
-              onToggle={() => handleClick(f.id)} onSelect={() => sel.toggle(f.id)} />
+            <FrameCard key={f.id} frame={f} selected={sel.selected.has(f.id)} onSelect={() => sel.toggle(f.id)} />
           ))}
         </div>
       )}
