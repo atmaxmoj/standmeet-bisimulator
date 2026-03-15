@@ -31,3 +31,24 @@ packages = ["src/engine"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.importlinter]
+root_packages = ["engine"]
+include_external_packages = false
+
+[[tool.importlinter.contracts]]
+name = "Engine layered architecture"
+type = "layers"
+layers = [
+    "engine.api",
+    "engine.tasks",
+    "engine.pipeline",
+    "engine.llm",
+    "engine.db",
+    "engine.config",
+]
+
+[dependency-groups]
+dev = [
+    "import-linter>=2.11",
+]

@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint src/",
+    "lint:circular": "madge --circular --extensions ts,tsx src/",
     "lint:dead": "knip",
     "preview": "vite preview"
   },
@@ -32,6 +33,7 @@
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.4.0",
     "knip": "^5.86.0",
+    "madge": "^8.0.0",
     "postcss": "^8.5.8",
     "tailwindcss": "^3.4.19",
     "tailwindcss-animate": "^1.0.7",
