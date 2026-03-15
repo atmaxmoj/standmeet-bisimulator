@@ -6,9 +6,15 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 function parseTs(ts: string): Date {
-  const d = new Date(ts);
-  if (!isNaN(d.getTime())) return d;
-  return new Date(ts + "Z");
+  // SQLite datetime('now') produces "2026-03-14 21:00:00" — UTC but no timezone suffix.
+  // new Date() parses bare timestamps as local time, shifting them hours into the future.
+  // Detect bare timestamps (no Z, no +/- offset after the date portion) and treat as UTC.
+  const hasTz = /Z|[+-]\d{2}:\d{2}$/.test(ts);
+  if (!hasTz) {
+    const d = new Date(ts.replace(" ", "T") + "Z");
+    if (!isNaN(d.getTime())) return d;
+  }
+  return new Date(ts);
 }
 
 export function timeAgo(ts: string): string {
