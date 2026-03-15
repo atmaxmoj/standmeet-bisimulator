@@ -4,14 +4,10 @@ import { useSelection } from "@/hooks/useSelection";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { SelectionBar } from "@/components/SelectionBar";
 
 function parseAction(raw: string): string {
-  try {
-    const parsed = JSON.parse(raw);
-    return parsed.action || raw;
-  } catch {
-    return raw;
-  }
+  try { return JSON.parse(raw).action || raw; } catch { return raw; }
 }
 
 const maturityVariant: Record<string, "default" | "secondary" | "outline" | "destructive"> = {
@@ -45,18 +41,9 @@ export function PlaybooksPanel() {
   useEffect(() => { load(); }, []);
 
   return (
-    <div className="space-y-4" data-testid="playbooks-panel">
+    <div className="space-y-4 pb-16" data-testid="playbooks-panel">
       <div className="flex justify-between items-center">
-        <div className="flex gap-2 items-center">
-          <input type="checkbox" checked={playbooks.length > 0 && playbooks.every((p) => sel.selected.has(p.id))}
-            onChange={() => sel.toggleAll(playbooks.map((p) => p.id))} />
-          {sel.selected.size > 0 && (
-            <Button variant="destructive" size="sm" onClick={sel.deleteSelected} disabled={sel.deleting}>
-              Delete {sel.selected.size}
-            </Button>
-          )}
-          <span className="text-sm text-muted-foreground" data-testid="entries-count">{playbooks.length} entries</span>
-        </div>
+        <span className="text-sm text-muted-foreground" data-testid="entries-count">{playbooks.length} entries</span>
         <div className="flex gap-2">
           <Button variant="default" size="sm" onClick={runDistill} disabled={distilling}>
             {distilling ? "Running..." : "Run Distill"}
@@ -75,16 +62,18 @@ export function PlaybooksPanel() {
       ) : (
         <div className="space-y-3">
           {playbooks.map((p) => (
-            <Card key={p.id}>
+            <Card key={p.id}
+              className={`cursor-pointer transition-colors ${sel.selected.has(p.id) ? "ring-1 ring-primary bg-primary/5" : "hover:bg-accent/50"}`}
+              onClick={() => sel.toggle(p.id)} onContextMenu={(e) => { e.preventDefault(); sel.toggle(p.id); }}
+            >
               <CardHeader className="pb-2">
                 <div className="flex items-center gap-2">
-                  <input type="checkbox" checked={sel.selected.has(p.id)} onChange={() => sel.toggle(p.id)} />
                   <CardTitle className="text-sm">{p.name}</CardTitle>
                   <Badge variant={maturityVariant[p.maturity] ?? "outline"}>{p.maturity}</Badge>
                 </div>
-                <CardDescription className="pl-6">{p.context}</CardDescription>
+                <CardDescription>{p.context}</CardDescription>
               </CardHeader>
-              <CardContent className="pl-9">
+              <CardContent>
                 <p className="text-sm mb-3">{parseAction(p.action)}</p>
                 <div className="flex items-center gap-3">
                   <span className="text-xs text-muted-foreground">{(p.confidence * 100).toFixed(0)}%</span>
@@ -96,6 +85,12 @@ export function PlaybooksPanel() {
             </Card>
           ))}
         </div>
+      )}
+
+      {sel.active && (
+        <SelectionBar count={sel.selected.size} allCount={playbooks.length}
+          onSelectAll={() => sel.toggleAll(playbooks.map((p) => p.id))} onClear={sel.clear}
+          onDelete={sel.deleteSelected} deleting={sel.deleting} />
       )}
     </div>
   );

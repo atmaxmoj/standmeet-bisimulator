@@ -6,17 +6,22 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Pagination } from "@/components/Pagination";
+import { SelectionBar } from "@/components/SelectionBar";
 
 const PAGE_SIZE = 30;
 
-function FrameCard({ frame, expanded, checked, onToggle, onCheck }: {
-  frame: Frame; expanded: boolean; checked: boolean; onToggle: () => void; onCheck: () => void;
+function FrameCard({ frame, expanded, selected, onToggle, onSelect }: {
+  frame: Frame; expanded: boolean; selected: boolean; onToggle: () => void; onSelect: () => void;
 }) {
   return (
-    <Card className="cursor-pointer hover:bg-accent/50 transition-colors" onClick={onToggle} data-testid="frame-card">
+    <Card
+      className={`cursor-pointer transition-colors ${selected ? "ring-1 ring-primary bg-primary/5" : "hover:bg-accent/50"}`}
+      onClick={onToggle}
+      onContextMenu={(e) => { e.preventDefault(); onSelect(); }}
+      data-testid="frame-card"
+    >
       <CardContent className="p-3">
-        <div className="flex items-start gap-3">
-          <input type="checkbox" checked={checked} onChange={onCheck} onClick={(e) => e.stopPropagation()} className="mt-1 shrink-0" />
+        <div className="flex items-start gap-4">
           <div className="shrink-0 w-40">
             <div className="text-xs text-muted-foreground">{fmtTime(frame.timestamp)}</div>
             <div className="text-[10px] text-muted-foreground/60">{timeAgo(frame.timestamp)}</div>
@@ -47,41 +52,33 @@ export function FramesPanel() {
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
-  const load = useCallback(async (p?: number) => {
-    const target = p ?? page;
+  const load = useCallback(async (p: number = 1) => {
     setLoading(true);
     try {
-      const data = await api.frames(PAGE_SIZE, (target - 1) * PAGE_SIZE);
+      const data = await api.frames(PAGE_SIZE, (p - 1) * PAGE_SIZE);
       setFrames(data.frames);
       setTotal(data.total ?? 0);
-      setPage(target);
+      setPage(p);
     } catch (e) { console.error(e); }
     setLoading(false);
-  }, [page]);
+  }, []);
 
-  const sel = useSelection("frames", () => load());
+  const sel = useSelection("frames", () => load(page));
   useEffect(() => { load(1); }, [load]);
 
-  const toggleExpand = (id: number) => {
-    setExpandedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
+  const handleClick = (id: number) => {
+    if (sel.active) { sel.toggle(id); } else {
+      setExpandedIds((prev) => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id); else next.add(id);
+        return next;
+      });
+    }
   };
 
   return (
     <div className="space-y-4 pb-16" data-testid="frames-panel">
-      <div className="flex justify-between">
-        <div className="flex gap-2">
-          <input type="checkbox" checked={frames.length > 0 && frames.every((f) => sel.selected.has(f.id))}
-            onChange={() => sel.toggleAll(frames.map((f) => f.id))} />
-          {sel.selected.size > 0 && (
-            <Button variant="destructive" size="sm" onClick={sel.deleteSelected} disabled={sel.deleting}>
-              Delete {sel.selected.size}
-            </Button>
-          )}
-        </div>
+      <div className="flex justify-end">
         <Button variant="outline" size="sm" onClick={() => load(1)}>Refresh</Button>
       </div>
       {loading ? (
@@ -91,14 +88,20 @@ export function FramesPanel() {
       ) : (
         <div className="space-y-2">
           {frames.map((f) => (
-            <FrameCard key={f.id} frame={f} expanded={expandedIds.has(f.id)}
-              checked={sel.selected.has(f.id)} onToggle={() => toggleExpand(f.id)} onCheck={() => sel.toggle(f.id)} />
+            <FrameCard key={f.id} frame={f} expanded={expandedIds.has(f.id)} selected={sel.selected.has(f.id)}
+              onToggle={() => handleClick(f.id)} onSelect={() => sel.toggle(f.id)} />
           ))}
         </div>
       )}
-      <div className="fixed bottom-0 left-0 right-0 bg-background/80 backdrop-blur-sm border-t py-2 flex justify-center z-50">
-        <Pagination page={page} totalPages={totalPages} onPageChange={load} />
-      </div>
+      {sel.active ? (
+        <SelectionBar count={sel.selected.size} allCount={frames.length}
+          onSelectAll={() => sel.toggleAll(frames.map((f) => f.id))} onClear={sel.clear}
+          onDelete={sel.deleteSelected} deleting={sel.deleting} />
+      ) : (
+        <div className="fixed bottom-0 left-0 right-0 bg-background/80 backdrop-blur-sm border-t py-2 flex justify-center z-50">
+          <Pagination page={page} totalPages={totalPages} onPageChange={load} />
+        </div>
+      )}
     </div>
   );
 }

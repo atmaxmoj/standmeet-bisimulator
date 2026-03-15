@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Pagination } from "@/components/Pagination";
+import { SelectionBar } from "@/components/SelectionBar";
 
 const PAGE_SIZE = 50;
 
@@ -18,12 +19,14 @@ const TYPE_COLORS: Record<string, "default" | "secondary" | "outline"> = {
   shell_command: "default", browser_url: "secondary",
 };
 
-function EventCard({ event, checked, onCheck }: { event: OsEvent; checked: boolean; onCheck: () => void }) {
+function EventCard({ event, selected, onSelect }: { event: OsEvent; selected: boolean; onSelect: () => void }) {
   return (
-    <Card data-testid="os-event-card">
+    <Card data-testid="os-event-card"
+      className={`cursor-pointer transition-colors ${selected ? "ring-1 ring-primary bg-primary/5" : "hover:bg-accent/50"}`}
+      onClick={onSelect} onContextMenu={(e) => { e.preventDefault(); onSelect(); }}
+    >
       <CardContent className="p-2 px-3">
         <div className="flex items-center gap-3">
-          <input type="checkbox" checked={checked} onChange={onCheck} className="shrink-0" />
           <span className="text-xs text-muted-foreground shrink-0 w-32">{fmtTime(event.timestamp)}</span>
           <span className="text-[10px] text-muted-foreground/60 shrink-0 w-16">{timeAgo(event.timestamp)}</span>
           <Badge variant={TYPE_COLORS[event.event_type] || "outline"} className="shrink-0 text-[10px]">
@@ -45,37 +48,26 @@ export function OsEventsPanel() {
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
-  const load = useCallback(async (p?: number, eventType = filter) => {
-    const target = p ?? page;
+  const load = useCallback(async (p: number = 1, eventType = filter) => {
     setLoading(true);
     try {
-      const data = await api.osEvents(PAGE_SIZE, (target - 1) * PAGE_SIZE, eventType);
+      const data = await api.osEvents(PAGE_SIZE, (p - 1) * PAGE_SIZE, eventType);
       setEvents(data.events ?? []);
       setTotal(data.total ?? 0);
-      setPage(target);
+      setPage(p);
     } catch (e) { console.error(e); }
     setLoading(false);
-  }, [filter, page]);
+  }, [filter]);
 
-  const sel = useSelection("os_events", () => load());
+  const sel = useSelection("os_events", () => load(page));
   useEffect(() => { load(1); }, [load]);
 
-  const setFilterAndLoad = (f: string) => {
-    setFilter(f);
-    load(1, f);
-  };
+  const setFilterAndLoad = (f: string) => { setFilter(f); load(1, f); };
 
   return (
     <div className="space-y-4 pb-16" data-testid="os-events-panel">
       <div className="flex justify-between items-center gap-2">
-        <div className="flex gap-2 items-center">
-          <input type="checkbox" checked={events.length > 0 && events.every((e) => sel.selected.has(e.id))}
-            onChange={() => sel.toggleAll(events.map((e) => e.id))} />
-          {sel.selected.size > 0 && (
-            <Button variant="destructive" size="sm" onClick={sel.deleteSelected} disabled={sel.deleting}>
-              Delete {sel.selected.size}
-            </Button>
-          )}
+        <div className="flex gap-1">
           {[["", "All"], ["shell_command", "Commands"], ["browser_url", "URLs"]].map(([val, label]) => (
             <Button key={val} variant={filter === val ? "default" : "outline"} size="sm" onClick={() => setFilterAndLoad(val)}>
               {label}
@@ -94,13 +86,19 @@ export function OsEventsPanel() {
         </div>
       ) : (
         <div className="space-y-1">
-          {events.map((e) => <EventCard key={e.id} event={e} checked={sel.selected.has(e.id)} onCheck={() => sel.toggle(e.id)} />)}
+          {events.map((e) => <EventCard key={e.id} event={e} selected={sel.selected.has(e.id)} onSelect={() => sel.toggle(e.id)} />)}
         </div>
       )}
 
-      <div className="fixed bottom-0 left-0 right-0 bg-background/80 backdrop-blur-sm border-t py-2 flex justify-center z-50">
-        <Pagination page={page} totalPages={totalPages} onPageChange={load} />
-      </div>
+      {sel.active ? (
+        <SelectionBar count={sel.selected.size} allCount={events.length}
+          onSelectAll={() => sel.toggleAll(events.map((e) => e.id))} onClear={sel.clear}
+          onDelete={sel.deleteSelected} deleting={sel.deleting} />
+      ) : (
+        <div className="fixed bottom-0 left-0 right-0 bg-background/80 backdrop-blur-sm border-t py-2 flex justify-center z-50">
+          <Pagination page={page} totalPages={totalPages} onPageChange={load} />
+        </div>
+      )}
     </div>
   );
 }

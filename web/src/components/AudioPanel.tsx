@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Pagination } from "@/components/Pagination";
+import { SelectionBar } from "@/components/SelectionBar";
 
 const PAGE_SIZE = 30;
 
@@ -17,33 +18,23 @@ export function AudioPanel() {
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
-  const load = useCallback(async (p?: number) => {
-    const target = p ?? page;
+  const load = useCallback(async (p: number = 1) => {
     setLoading(true);
     try {
-      const data = await api.audio(PAGE_SIZE, (target - 1) * PAGE_SIZE);
+      const data = await api.audio(PAGE_SIZE, (p - 1) * PAGE_SIZE);
       setFrames(data.audio ?? []);
       setTotal(data.total ?? 0);
-      setPage(target);
+      setPage(p);
     } catch (e) { console.error(e); }
     setLoading(false);
-  }, [page]);
+  }, []);
 
-  const sel = useSelection("audio_frames", () => load());
+  const sel = useSelection("audio_frames", () => load(page));
   useEffect(() => { load(1); }, [load]);
 
   return (
     <div className="space-y-4 pb-16" data-testid="audio-panel">
-      <div className="flex justify-between">
-        <div className="flex gap-2">
-          <input type="checkbox" checked={frames.length > 0 && frames.every((f) => sel.selected.has(f.id))}
-            onChange={() => sel.toggleAll(frames.map((f) => f.id))} />
-          {sel.selected.size > 0 && (
-            <Button variant="destructive" size="sm" onClick={sel.deleteSelected} disabled={sel.deleting}>
-              Delete {sel.selected.size}
-            </Button>
-          )}
-        </div>
+      <div className="flex justify-end">
         <Button variant="outline" size="sm" onClick={() => load(1)}>Refresh</Button>
       </div>
 
@@ -57,10 +48,13 @@ export function AudioPanel() {
       ) : (
         <div className="space-y-2">
           {frames.map((a) => (
-            <Card key={a.id} data-testid="audio-card">
+            <Card key={a.id} data-testid="audio-card"
+              className={`cursor-pointer transition-colors ${sel.selected.has(a.id) ? "ring-1 ring-primary bg-primary/5" : "hover:bg-accent/50"}`}
+              onClick={() => sel.active ? sel.toggle(a.id) : sel.toggle(a.id)}
+              onContextMenu={(e) => { e.preventDefault(); sel.toggle(a.id); }}
+            >
               <CardContent className="p-3">
                 <div className="flex items-center gap-3 mb-2">
-                  <input type="checkbox" checked={sel.selected.has(a.id)} onChange={() => sel.toggle(a.id)} />
                   <span className="text-xs text-muted-foreground">{fmtTime(a.timestamp)}</span>
                   <span className="text-[10px] text-muted-foreground/60">{timeAgo(a.timestamp)}</span>
                   <Badge variant={a.source === "speaker" ? "default" : "outline"}>
@@ -76,9 +70,15 @@ export function AudioPanel() {
         </div>
       )}
 
-      <div className="fixed bottom-0 left-0 right-0 bg-background/80 backdrop-blur-sm border-t py-2 flex justify-center z-50">
-        <Pagination page={page} totalPages={totalPages} onPageChange={load} />
-      </div>
+      {sel.active ? (
+        <SelectionBar count={sel.selected.size} allCount={frames.length}
+          onSelectAll={() => sel.toggleAll(frames.map((f) => f.id))} onClear={sel.clear}
+          onDelete={sel.deleteSelected} deleting={sel.deleting} />
+      ) : (
+        <div className="fixed bottom-0 left-0 right-0 bg-background/80 backdrop-blur-sm border-t py-2 flex justify-center z-50">
+          <Pagination page={page} totalPages={totalPages} onPageChange={load} />
+        </div>
+      )}
     </div>
   );
 }

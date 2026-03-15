@@ -20,6 +20,8 @@ export function useSelection(table: string, onDeleted: () => void) {
     });
   };
 
+  const clear = () => setSelected(new Set());
+
   const deleteSelected = async () => {
     if (!selected.size) return;
     setDeleting(true);
@@ -33,5 +35,7 @@ export function useSelection(table: string, onDeleted: () => void) {
     setDeleting(false);
   };
 
-  return { selected, toggle, toggleAll, deleteSelected, deleting };
+  const active = selected.size > 0;
+
+  return { selected, toggle, toggleAll, clear, deleteSelected, deleting, active };
 }
