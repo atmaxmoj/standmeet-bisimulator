@@ -62,7 +62,7 @@ function Header() {
           <span
             data-testid="engine-status"
             className={`w-2 h-2 rounded-full ${
-              status.online ? (paused ? "bg-yellow-500 animate-pulse" : "bg-green-500") : "bg-destructive"
+              status.online ? (paused ? "bg-yellow-500 animate-pulse" : "bg-green-500 animate-pulse") : "bg-destructive"
             }`}
           />
           {paused ? "Paused" : "Recording"}
