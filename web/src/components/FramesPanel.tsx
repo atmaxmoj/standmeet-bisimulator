@@ -8,6 +8,32 @@ import { Pagination } from "@/components/Pagination";
 
 const PAGE_SIZE = 30;
 
+function FrameCard({ frame, expanded, onToggle }: { frame: Frame; expanded: boolean; onToggle: () => void }) {
+  return (
+    <Card className="cursor-pointer hover:bg-accent/50 transition-colors" onClick={onToggle} data-testid="frame-card">
+      <CardContent className="p-3">
+        <div className="flex items-start gap-4">
+          <div className="shrink-0 w-40">
+            <div className="text-xs text-muted-foreground">{fmtTime(frame.timestamp)}</div>
+            <div className="text-[10px] text-muted-foreground/60">{timeAgo(frame.timestamp)}</div>
+          </div>
+          <div className="shrink-0 w-36">
+            <div className="text-xs font-medium text-primary truncate">{frame.app_name}</div>
+            <div className="text-[10px] text-muted-foreground truncate">{frame.window_name}</div>
+            <Badge variant="secondary" className="mt-1 text-[10px]">display {frame.display_id}</Badge>
+          </div>
+          <div className={`text-xs text-foreground/80 whitespace-pre-wrap break-words flex-1 ${expanded ? "" : "max-h-12 overflow-hidden"}`}>
+            {frame.text}
+          </div>
+        </div>
+        {expanded && frame.image_path && (
+          <img src={frameImageUrl(frame.id)} alt={`Screenshot ${frame.id}`} className="mt-2 w-full rounded border" loading="lazy" />
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export function FramesPanel() {
   const [frames, setFrames] = useState<Frame[]>([]);
   const [loading, setLoading] = useState(true);
@@ -43,11 +69,8 @@ export function FramesPanel() {
   return (
     <div className="space-y-4 pb-16" data-testid="frames-panel">
       <div className="flex justify-end">
-        <Button variant="outline" size="sm" onClick={() => load(1)}>
-          Refresh
-        </Button>
+        <Button variant="outline" size="sm" onClick={() => load(1)}>Refresh</Button>
       </div>
-
       {loading ? (
         <p className="text-muted-foreground text-center py-12">Loading...</p>
       ) : !frames.length ? (
@@ -55,47 +78,10 @@ export function FramesPanel() {
       ) : (
         <div className="space-y-2">
           {frames.map((f) => (
-            <Card
-              key={f.id}
-              className="cursor-pointer hover:bg-accent/50 transition-colors"
-              onClick={() => toggle(f.id)}
-              data-testid="frame-card"
-            >
-              <CardContent className="p-3">
-                <div className="flex items-start gap-4">
-                  <div className="shrink-0 w-40">
-                    <div className="text-xs text-muted-foreground">{fmtTime(f.timestamp)}</div>
-                    <div className="text-[10px] text-muted-foreground/60">{timeAgo(f.timestamp)}</div>
-                  </div>
-                  <div className="shrink-0 w-36">
-                    <div className="text-xs font-medium text-primary truncate">{f.app_name}</div>
-                    <div className="text-[10px] text-muted-foreground truncate">{f.window_name}</div>
-                    <Badge variant="secondary" className="mt-1 text-[10px]">
-                      display {f.display_id}
-                    </Badge>
-                  </div>
-                  <div
-                    className={`text-xs text-foreground/80 whitespace-pre-wrap break-words flex-1 ${
-                      expandedIds.has(f.id) ? "" : "max-h-12 overflow-hidden"
-                    }`}
-                  >
-                    {f.text}
-                  </div>
-                </div>
-                {expandedIds.has(f.id) && f.image_path && (
-                  <img
-                    src={frameImageUrl(f.id)}
-                    alt={`Screenshot ${f.id}`}
-                    className="mt-2 w-full rounded border"
-                    loading="lazy"
-                  />
-                )}
-              </CardContent>
-            </Card>
+            <FrameCard key={f.id} frame={f} expanded={expandedIds.has(f.id)} onToggle={() => toggle(f.id)} />
           ))}
         </div>
       )}
-
       <div className="fixed bottom-0 left-0 right-0 bg-background/80 backdrop-blur-sm border-t py-2 flex justify-center z-50">
         <Pagination page={page} totalPages={totalPages} onPageChange={load} />
       </div>

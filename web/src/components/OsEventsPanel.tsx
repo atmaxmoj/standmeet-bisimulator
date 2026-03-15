@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api, type OsEvent } from "@/lib/api";
 import { timeAgo, fmtTime } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -9,18 +9,30 @@ import { Pagination } from "@/components/Pagination";
 const PAGE_SIZE = 50;
 
 const SOURCE_LABELS: Record<string, string> = {
-  zsh: "Terminal",
-  bash: "Terminal",
-  powershell: "PowerShell",
-  chrome: "Chrome",
-  safari: "Safari",
-  edge: "Edge",
+  zsh: "Terminal", bash: "Terminal", powershell: "PowerShell",
+  chrome: "Chrome", safari: "Safari", edge: "Edge",
 };
 
 const TYPE_COLORS: Record<string, "default" | "secondary" | "outline"> = {
-  shell_command: "default",
-  browser_url: "secondary",
+  shell_command: "default", browser_url: "secondary",
 };
+
+function EventCard({ event }: { event: OsEvent }) {
+  return (
+    <Card data-testid="os-event-card">
+      <CardContent className="p-2 px-3">
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-muted-foreground shrink-0 w-32">{fmtTime(event.timestamp)}</span>
+          <span className="text-[10px] text-muted-foreground/60 shrink-0 w-16">{timeAgo(event.timestamp)}</span>
+          <Badge variant={TYPE_COLORS[event.event_type] || "outline"} className="shrink-0 text-[10px]">
+            {SOURCE_LABELS[event.source] || event.source}
+          </Badge>
+          <span className="text-xs text-foreground/80 font-mono truncate flex-1">{event.data}</span>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
 
 export function OsEventsPanel() {
   const [events, setEvents] = useState<OsEvent[]>([]);
@@ -31,7 +43,7 @@ export function OsEventsPanel() {
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
-  const load = async (p: number, eventType = filter) => {
+  const load = useCallback(async (p: number, eventType = filter) => {
     setLoading(true);
     try {
       const data = await api.osEvents(PAGE_SIZE, (p - 1) * PAGE_SIZE, eventType);
@@ -42,9 +54,9 @@ export function OsEventsPanel() {
       console.error(e);
     }
     setLoading(false);
-  };
+  }, [filter]);
 
-  useEffect(() => { load(1); }, []);
+  useEffect(() => { load(1); }, [load]);
 
   const setFilterAndLoad = (f: string) => {
     setFilter(f);
@@ -55,31 +67,13 @@ export function OsEventsPanel() {
     <div className="space-y-4 pb-16" data-testid="os-events-panel">
       <div className="flex justify-between items-center gap-2">
         <div className="flex gap-1">
-          <Button
-            variant={filter === "" ? "default" : "outline"}
-            size="sm"
-            onClick={() => setFilterAndLoad("")}
-          >
-            All
-          </Button>
-          <Button
-            variant={filter === "shell_command" ? "default" : "outline"}
-            size="sm"
-            onClick={() => setFilterAndLoad("shell_command")}
-          >
-            Commands
-          </Button>
-          <Button
-            variant={filter === "browser_url" ? "default" : "outline"}
-            size="sm"
-            onClick={() => setFilterAndLoad("browser_url")}
-          >
-            URLs
-          </Button>
+          {[["", "All"], ["shell_command", "Commands"], ["browser_url", "URLs"]].map(([val, label]) => (
+            <Button key={val} variant={filter === val ? "default" : "outline"} size="sm" onClick={() => setFilterAndLoad(val)}>
+              {label}
+            </Button>
+          ))}
         </div>
-        <Button variant="outline" size="sm" onClick={() => load(1)}>
-          Refresh
-        </Button>
+        <Button variant="outline" size="sm" onClick={() => load(1)}>Refresh</Button>
       </div>
 
       {loading ? (
@@ -91,26 +85,7 @@ export function OsEventsPanel() {
         </div>
       ) : (
         <div className="space-y-1">
-          {events.map((e) => (
-            <Card key={e.id} data-testid="os-event-card">
-              <CardContent className="p-2 px-3">
-                <div className="flex items-center gap-3">
-                  <span className="text-xs text-muted-foreground shrink-0 w-32">
-                    {fmtTime(e.timestamp)}
-                  </span>
-                  <span className="text-[10px] text-muted-foreground/60 shrink-0 w-16">
-                    {timeAgo(e.timestamp)}
-                  </span>
-                  <Badge variant={TYPE_COLORS[e.event_type] || "outline"} className="shrink-0 text-[10px]">
-                    {SOURCE_LABELS[e.source] || e.source}
-                  </Badge>
-                  <span className="text-xs text-foreground/80 font-mono truncate flex-1">
-                    {e.data}
-                  </span>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+          {events.map((e) => <EventCard key={e.id} event={e} />)}
         </div>
       )}
 
