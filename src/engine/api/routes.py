@@ -110,16 +110,16 @@ async def ingest_os_event(request: Request, body: OsEventIngest):
 
 
 @router.get("/capture/frames")
-async def list_capture_frames(request: Request, limit: int = 50, offset: int = 0):
+async def list_capture_frames(request: Request, limit: int = 50, offset: int = 0, search: str = ""):
     db = request.app.state.db
-    frames, total = await db.get_frames(limit=limit, offset=offset)
+    frames, total = await db.get_frames(limit=limit, offset=offset, search=search)
     return {"frames": frames, "total": total}
 
 
 @router.get("/capture/audio")
-async def list_audio_frames(request: Request, limit: int = 50, offset: int = 0):
+async def list_audio_frames(request: Request, limit: int = 50, offset: int = 0, search: str = ""):
     db = request.app.state.db
-    audio, total = await db.get_audio_frames(limit=limit, offset=offset)
+    audio, total = await db.get_audio_frames(limit=limit, offset=offset, search=search)
     return {"audio": audio, "total": total}
 
 
@@ -129,9 +129,10 @@ async def list_os_events(
     limit: int = 50,
     offset: int = 0,
     event_type: str = "",
+    search: str = "",
 ):
     db = request.app.state.db
-    events, total = await db.get_os_events(limit=limit, offset=offset, event_type=event_type)
+    events, total = await db.get_os_events(limit=limit, offset=offset, event_type=event_type, search=search)
     return {"events": events, "total": total}
 
 
@@ -163,17 +164,17 @@ async def get_frame_image(request: Request, frame_id: int):
 
 
 @router.get("/memory/episodes/")
-async def list_episodes(request: Request, limit: int = 50, offset: int = 0):
+async def list_episodes(request: Request, limit: int = 50, offset: int = 0, search: str = ""):
     db = request.app.state.db
-    episodes = await db.get_all_episodes(limit=limit, offset=offset)
-    total = await db.count_episodes()
+    episodes = await db.get_all_episodes(limit=limit, offset=offset, search=search)
+    total = await db.count_episodes(search=search)
     return {"episodes": episodes, "total": total}
 
 
 @router.get("/memory/playbooks/")
-async def list_playbooks(request: Request):
+async def list_playbooks(request: Request, search: str = ""):
     db = request.app.state.db
-    playbooks = await db.get_all_playbooks()
+    playbooks = await db.get_all_playbooks(search=search)
     return {"playbooks": playbooks}
 
 
@@ -241,9 +242,9 @@ async def engine_usage(request: Request, days: int = 7):
 
 
 @router.get("/engine/logs")
-async def pipeline_logs(request: Request, limit: int = 50, offset: int = 0):
+async def pipeline_logs(request: Request, limit: int = 50, offset: int = 0, search: str = ""):
     db = request.app.state.db
-    logs, total = await db.get_pipeline_logs(limit=limit, offset=offset)
+    logs, total = await db.get_pipeline_logs(limit=limit, offset=offset, search=search)
     return {"logs": logs, "total": total}
 
 

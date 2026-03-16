@@ -221,34 +221,50 @@ class DB:
 
     # -- query (for API + pipeline) --
 
-    async def get_frames(self, limit: int = 50, offset: int = 0) -> tuple[list[dict], int]:
-        async with self._conn.execute("SELECT COUNT(*) FROM frames") as cur:
+    async def get_frames(self, limit: int = 50, offset: int = 0, search: str = "") -> tuple[list[dict], int]:
+        clauses, params = [], []
+        if search:
+            clauses.append("(app_name LIKE ? OR window_name LIKE ? OR text LIKE ?)")
+            params.extend([f"%{search}%"] * 3)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        async with self._conn.execute(f"SELECT COUNT(*) FROM frames {where}", params) as cur:
             total = (await cur.fetchone())[0]
         async with self._conn.execute(
-            "SELECT id, timestamp, app_name, window_name, "
-            "substr(text, 1, 500) as text, display_id, image_hash, image_path "
-            "FROM frames ORDER BY id DESC LIMIT ? OFFSET ?",
-            (limit, offset),
+            f"SELECT id, timestamp, app_name, window_name, "
+            f"substr(text, 1, 500) as text, display_id, image_hash, image_path "
+            f"FROM frames {where} ORDER BY id DESC LIMIT ? OFFSET ?",
+            params + [limit, offset],
         ) as cur:
             rows = [dict(r) for r in await cur.fetchall()]
         return rows, total
 
-    async def get_audio_frames(self, limit: int = 50, offset: int = 0) -> tuple[list[dict], int]:
-        async with self._conn.execute("SELECT COUNT(*) FROM audio_frames") as cur:
+    async def get_audio_frames(self, limit: int = 50, offset: int = 0, search: str = "") -> tuple[list[dict], int]:
+        clauses, params = [], []
+        if search:
+            clauses.append("text LIKE ?")
+            params.append(f"%{search}%")
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        async with self._conn.execute(f"SELECT COUNT(*) FROM audio_frames {where}", params) as cur:
             total = (await cur.fetchone())[0]
         async with self._conn.execute(
-            "SELECT id, timestamp, duration_seconds, text, language, source "
-            "FROM audio_frames ORDER BY id DESC LIMIT ? OFFSET ?",
-            (limit, offset),
+            f"SELECT id, timestamp, duration_seconds, text, language, source "
+            f"FROM audio_frames {where} ORDER BY id DESC LIMIT ? OFFSET ?",
+            params + [limit, offset],
         ) as cur:
             rows = [dict(r) for r in await cur.fetchall()]
         return rows, total
 
     async def get_os_events(
-        self, limit: int = 50, offset: int = 0, event_type: str = ""
+        self, limit: int = 50, offset: int = 0, event_type: str = "", search: str = ""
     ) -> tuple[list[dict], int]:
-        where = "WHERE event_type = ?" if event_type else ""
-        params: list = [event_type] if event_type else []
+        clauses, params = [], []
+        if event_type:
+            clauses.append("event_type = ?")
+            params.append(event_type)
+        if search:
+            clauses.append("(data LIKE ? OR source LIKE ?)")
+            params.extend([f"%{search}%"] * 2)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         async with self._conn.execute(
             f"SELECT COUNT(*) FROM os_events {where}", params
         ) as cur:
@@ -334,16 +350,26 @@ class DB:
             rows = await cur.fetchall()
             return [dict(r) for r in rows]
 
-    async def get_all_episodes(self, limit: int = 100, offset: int = 0) -> list[dict]:
+    async def get_all_episodes(self, limit: int = 100, offset: int = 0, search: str = "") -> list[dict]:
+        clauses, params = [], []
+        if search:
+            clauses.append("(summary LIKE ? OR app_names LIKE ?)")
+            params.extend([f"%{search}%"] * 2)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         async with self._conn.execute(
-            "SELECT * FROM episodes ORDER BY created_at DESC LIMIT ? OFFSET ?",
-            (limit, offset),
+            f"SELECT * FROM episodes {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            params + [limit, offset],
         ) as cur:
             rows = await cur.fetchall()
             return [dict(r) for r in rows]
 
-    async def count_episodes(self) -> int:
-        async with self._conn.execute("SELECT COUNT(*) FROM episodes") as cur:
+    async def count_episodes(self, search: str = "") -> int:
+        clauses, params = [], []
+        if search:
+            clauses.append("(summary LIKE ? OR app_names LIKE ?)")
+            params.extend([f"%{search}%"] * 2)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        async with self._conn.execute(f"SELECT COUNT(*) FROM episodes {where}", params) as cur:
             return (await cur.fetchone())[0]
 
     # -- playbook entries --
@@ -373,9 +399,14 @@ class DB:
             name, confidence, maturity,
         )
 
-    async def get_all_playbooks(self) -> list[dict]:
+    async def get_all_playbooks(self, search: str = "") -> list[dict]:
+        clauses, params = [], []
+        if search:
+            clauses.append("(name LIKE ? OR context LIKE ? OR action LIKE ?)")
+            params.extend([f"%{search}%"] * 3)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         async with self._conn.execute(
-            "SELECT * FROM playbook_entries ORDER BY confidence DESC"
+            f"SELECT * FROM playbook_entries {where} ORDER BY confidence DESC", params
         ) as cur:
             rows = await cur.fetchall()
             return [dict(r) for r in rows]
@@ -519,13 +550,18 @@ class DB:
             await self._conn.commit()
             return cur.lastrowid
 
-    async def get_pipeline_logs(self, limit: int = 50, offset: int = 0) -> tuple[list[dict], int]:
-        async with self._conn.execute("SELECT COUNT(*) FROM pipeline_logs") as cur:
+    async def get_pipeline_logs(self, limit: int = 50, offset: int = 0, search: str = "") -> tuple[list[dict], int]:
+        clauses, params = [], []
+        if search:
+            clauses.append("(stage LIKE ? OR model LIKE ? OR prompt LIKE ? OR response LIKE ?)")
+            params.extend([f"%{search}%"] * 4)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        async with self._conn.execute(f"SELECT COUNT(*) FROM pipeline_logs {where}", params) as cur:
             total = (await cur.fetchone())[0]
         async with self._conn.execute(
-            "SELECT id, stage, prompt, response, model, input_tokens, output_tokens, cost_usd, created_at "
-            "FROM pipeline_logs ORDER BY id DESC LIMIT ? OFFSET ?",
-            (limit, offset),
+            f"SELECT id, stage, prompt, response, model, input_tokens, output_tokens, cost_usd, created_at "
+            f"FROM pipeline_logs {where} ORDER BY id DESC LIMIT ? OFFSET ?",
+            params + [limit, offset],
         ) as cur:
             rows = [dict(r) for r in await cur.fetchall()]
         return rows, total

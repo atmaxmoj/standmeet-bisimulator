@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api, type PipelineLog } from "@/lib/api";
 import { timeAgo } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Pagination } from "@/components/Pagination";
+import { SearchInput } from "@/components/SearchInput";
 
 const PAGE_SIZE = 10;
 
@@ -58,13 +59,14 @@ export function LogsPanel() {
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [expanded, setExpanded] = useState<number | null>(null);
+  const [search, setSearch] = useState("");
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
-  const load = async (p: number) => {
+  const load = useCallback(async (p: number) => {
     setLoading(true);
     try {
-      const data = await api.logs(PAGE_SIZE, (p - 1) * PAGE_SIZE);
+      const data = await api.logs(PAGE_SIZE, (p - 1) * PAGE_SIZE, search);
       setLogs(data.logs);
       setTotal(data.total ?? 0);
       setPage(p);
@@ -72,13 +74,14 @@ export function LogsPanel() {
       console.error(e);
     }
     setLoading(false);
-  };
+  }, [search]);
 
-  useEffect(() => { load(1); }, []);
+  useEffect(() => { load(1); }, [load]);
 
   return (
     <div className="space-y-4 pb-16" data-testid="logs-panel">
-      <div className="flex justify-end">
+      <div className="flex items-center justify-between">
+        <SearchInput onSearch={setSearch} />
         <Button variant="outline" size="sm" onClick={() => load(page)}>Refresh</Button>
       </div>
 

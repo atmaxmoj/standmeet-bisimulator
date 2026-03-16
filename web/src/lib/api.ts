@@ -111,22 +111,30 @@ export interface PipelineLog {
   created_at: string;
 }
 
+function qs(params: Record<string, string | number>): string {
+  return Object.entries(params)
+    .filter(([, v]) => typeof v === "number" || v !== "")
+    .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+    .join("&");
+}
+
 export const api = {
   status: () => get<Status>("/engine/status"),
-  frames: (limit = 30, offset = 0) =>
-    get<{ frames: Frame[]; total: number }>(`/capture/frames?limit=${limit}&offset=${offset}`),
-  audio: (limit = 30, offset = 0) =>
-    get<{ audio: AudioFrame[]; total: number }>(`/capture/audio?limit=${limit}&offset=${offset}`),
-  episodes: (limit = 20, offset = 0) =>
-    get<{ episodes: Episode[]; total: number }>(`/memory/episodes/?limit=${limit}&offset=${offset}`),
-  playbooks: () => get<{ playbooks: Playbook[] }>("/memory/playbooks/"),
-  osEvents: (limit = 50, offset = 0, eventType = "") =>
+  frames: (limit = 30, offset = 0, search = "") =>
+    get<{ frames: Frame[]; total: number }>(`/capture/frames?${qs({ limit, offset, search })}`),
+  audio: (limit = 30, offset = 0, search = "") =>
+    get<{ audio: AudioFrame[]; total: number }>(`/capture/audio?${qs({ limit, offset, search })}`),
+  episodes: (limit = 20, offset = 0, search = "") =>
+    get<{ episodes: Episode[]; total: number }>(`/memory/episodes/?${qs({ limit, offset, search })}`),
+  playbooks: (search = "") =>
+    get<{ playbooks: Playbook[] }>(`/memory/playbooks/?${qs({ search })}`),
+  osEvents: (limit = 50, offset = 0, eventType = "", search = "") =>
     get<{ events: OsEvent[]; total: number }>(
-      `/capture/os-events?limit=${limit}&offset=${offset}${eventType ? `&event_type=${eventType}` : ""}`
+      `/capture/os-events?${qs({ limit, offset, event_type: eventType, search })}`
     ),
   usage: (days = 30) => get<UsageSummary>(`/engine/usage?days=${days}`),
-  logs: (limit = 20, offset = 0) =>
-    get<{ logs: PipelineLog[]; total: number }>(`/engine/logs?limit=${limit}&offset=${offset}`),
+  logs: (limit = 20, offset = 0, search = "") =>
+    get<{ logs: PipelineLog[]; total: number }>(`/engine/logs?${qs({ limit, offset, search })}`),
   distill: () => post<{ playbook_entries_updated: number }>("/engine/distill"),
   batchDelete: (table: string, ids: number[]) =>
     post<{ deleted: number }>("/batch/delete", { table, ids }),

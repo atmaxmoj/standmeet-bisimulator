@@ -7,6 +7,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Pagination } from "@/components/Pagination";
 import { SelectionBar } from "@/components/SelectionBar";
+import { SearchInput } from "@/components/SearchInput";
 
 const PAGE_SIZE = 50;
 
@@ -45,19 +46,20 @@ export function OsEventsPanel() {
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [filter, setFilter] = useState("");
+  const [search, setSearch] = useState("");
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
   const load = useCallback(async (p: number = 1, eventType = filter) => {
     setLoading(true);
     try {
-      const data = await api.osEvents(PAGE_SIZE, (p - 1) * PAGE_SIZE, eventType);
+      const data = await api.osEvents(PAGE_SIZE, (p - 1) * PAGE_SIZE, eventType, search);
       setEvents(data.events ?? []);
       setTotal(data.total ?? 0);
       setPage(p);
     } catch (e) { console.error(e); }
     setLoading(false);
-  }, [filter]);
+  }, [filter, search]);
 
   const sel = useSelection("os_events", () => load(page));
   useEffect(() => { load(1); }, [load]);
@@ -67,12 +69,15 @@ export function OsEventsPanel() {
   return (
     <div className="space-y-4 pb-16" data-testid="os-events-panel">
       <div className="flex justify-between items-center gap-2">
-        <div className="flex gap-1">
-          {[["", "All"], ["shell_command", "Commands"], ["browser_url", "URLs"]].map(([val, label]) => (
-            <Button key={val} variant={filter === val ? "default" : "outline"} size="sm" onClick={() => setFilterAndLoad(val)}>
-              {label}
-            </Button>
-          ))}
+        <div className="flex items-center gap-3">
+          <SearchInput onSearch={setSearch} />
+          <div className="flex gap-1">
+            {[["", "All"], ["shell_command", "Commands"], ["browser_url", "URLs"]].map(([val, label]) => (
+              <Button key={val} variant={filter === val ? "default" : "outline"} size="sm" onClick={() => setFilterAndLoad(val)}>
+                {label}
+              </Button>
+            ))}
+          </div>
         </div>
         <Button variant="outline" size="sm" onClick={() => load(1)}>Refresh</Button>
       </div>

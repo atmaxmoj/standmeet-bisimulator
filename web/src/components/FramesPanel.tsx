@@ -7,6 +7,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Pagination } from "@/components/Pagination";
 import { SelectionBar } from "@/components/SelectionBar";
+import { SearchInput } from "@/components/SearchInput";
 
 const PAGE_SIZE = 30;
 
@@ -80,26 +81,28 @@ export function FramesPanel() {
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [detailFrame, setDetailFrame] = useState<Frame | null>(null);
+  const [search, setSearch] = useState("");
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
   const load = useCallback(async (p: number = 1) => {
     setLoading(true);
     try {
-      const data = await api.frames(PAGE_SIZE, (p - 1) * PAGE_SIZE);
+      const data = await api.frames(PAGE_SIZE, (p - 1) * PAGE_SIZE, search);
       setFrames(data.frames);
       setTotal(data.total ?? 0);
       setPage(p);
     } catch (e) { console.error(e); }
     setLoading(false);
-  }, []);
+  }, [search]);
 
   const sel = useSelection("frames", () => load(page));
   useEffect(() => { load(1); }, [load]);
 
   return (
     <div className="space-y-4 pb-16" data-testid="frames-panel">
-      <div className="flex justify-end">
+      <div className="flex items-center justify-between">
+        <SearchInput onSearch={setSearch} />
         <Button variant="outline" size="sm" onClick={() => load(1)}>Refresh</Button>
       </div>
       {loading ? (

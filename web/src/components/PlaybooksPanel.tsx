@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api, type Playbook } from "@/lib/api";
 import { useSelection } from "@/hooks/useSelection";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { SelectionBar } from "@/components/SelectionBar";
+import { SearchInput } from "@/components/SearchInput";
 
 function parseAction(raw: string): string {
   try { return JSON.parse(raw).action || raw; } catch { return raw; }
@@ -18,12 +19,13 @@ export function PlaybooksPanel() {
   const [playbooks, setPlaybooks] = useState<Playbook[]>([]);
   const [loading, setLoading] = useState(true);
   const [distilling, setDistilling] = useState(false);
+  const [search, setSearch] = useState("");
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
-    try { setPlaybooks((await api.playbooks()).playbooks); } catch (e) { console.error(e); }
+    try { setPlaybooks((await api.playbooks(search)).playbooks); } catch (e) { console.error(e); }
     setLoading(false);
-  };
+  }, [search]);
 
   const sel = useSelection("playbook_entries", load);
 
@@ -38,12 +40,15 @@ export function PlaybooksPanel() {
     setDistilling(false);
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [load]);
 
   return (
     <div className="space-y-4 pb-16" data-testid="playbooks-panel">
       <div className="flex justify-between items-center">
-        <span className="text-sm text-muted-foreground" data-testid="entries-count">{playbooks.length} entries</span>
+        <div className="flex items-center gap-3">
+          <SearchInput onSearch={setSearch} />
+          <span className="text-sm text-muted-foreground" data-testid="entries-count">{playbooks.length} entries</span>
+        </div>
         <div className="flex gap-2">
           <Button variant="default" size="sm" onClick={runDistill} disabled={distilling}>
             {distilling ? "Running..." : "Run Distill"}

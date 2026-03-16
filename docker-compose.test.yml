@@ -1,0 +1,20 @@
+services:
+  engine-test:
+    build: .
+    ports:
+      - "5002:5000"
+    volumes:
+      - engine-test-data:/data
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-sk-fake-test-key}
+      - DB_PATH=/data/engine.db
+      - FRAMES_BASE_DIR=/data/frames
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/engine/status')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  engine-test-data:
