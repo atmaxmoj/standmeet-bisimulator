@@ -283,7 +283,7 @@ async def _chat_stream(db, llm, messages: list[dict]) -> AsyncGenerator[str, Non
 
         if not tool_uses or resp.stop_reason == "end_turn":
             reply = text_blocks[-1].text if text_blocks else ""
-            await db.append_chat_message("assistant", reply)
+            await db.append_chat_message("assistant", reply, json.dumps(proposals, default=str))
             await _record_usage(db, total_input, total_output)
             logger.info("chat: done, %d tokens in, %d out, %d proposals", total_input, total_output, len(proposals))
             yield _sse("text", {"content": reply, "proposals": proposals,

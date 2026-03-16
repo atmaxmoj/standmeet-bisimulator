@@ -158,6 +158,8 @@ export const api = {
   distill: () => post<{ playbook_entries_updated: number }>("/engine/distill"),
   batchDelete: (table: string, ids: number[]) =>
     post<{ deleted: number }>("/batch/delete", { table, ids }),
+  updatePlaybook: (fields: Record<string, unknown>) =>
+    post<{ updated: boolean }>("/batch/update-playbook", fields),
   pipeline: () => get<{ paused: boolean }>("/engine/pipeline"),
   pipelinePause: () => post<{ paused: boolean }>("/engine/pipeline/pause"),
   pipelineResume: () => post<{ paused: boolean }>("/engine/pipeline/resume"),
@@ -204,6 +206,7 @@ export const api = {
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
+  proposals?: string;
 }
 
 export interface Proposal {

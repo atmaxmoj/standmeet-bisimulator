@@ -142,7 +142,13 @@ export function ChatPanel() {
   useEffect(() => {
     api.chatHistory().then(({ messages: history }) => {
       if (history.length > 0) {
-        setMessages(history.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })));
+        setMessages(history.map((m) => {
+          const props = typeof m.proposals === "string" ? JSON.parse(m.proposals || "[]") : (m.proposals || []);
+          return {
+            role: m.role as "user" | "assistant", content: m.content,
+            proposals: props.map((p: Proposal) => ({ proposal: p, status: "pending" as const })),
+          };
+        }));
         setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }), 100);
       }
     }).catch(() => {});
@@ -182,6 +188,7 @@ export function ChatPanel() {
     try {
       const p = entry.proposal;
       if (p.type === "delete" && p.table && p.ids) await api.batchDelete(p.table, p.ids);
+      if (p.type === "update_playbook" && p.fields) await api.updatePlaybook(p.fields);
       setMessages((prev) => updateProposalStatus(prev, msgIdx, propIdx, "approved"));
     } catch {
       setMessages((prev) => updateProposalStatus(prev, msgIdx, propIdx, "rejected"));

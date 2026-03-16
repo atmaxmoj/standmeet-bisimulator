@@ -133,6 +133,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     role TEXT NOT NULL,
     content TEXT NOT NULL DEFAULT '',
+    proposals TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 """
@@ -157,6 +158,7 @@ class DB:
             "ALTER TABLE audio_frames ADD COLUMN processed INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE os_events ADD COLUMN processed INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE playbook_entries ADD COLUMN last_evidence_at TEXT",
+            "ALTER TABLE chat_messages ADD COLUMN proposals TEXT NOT NULL DEFAULT '[]'",
         ]:
             try:
                 await self._conn.execute(sql)
@@ -672,11 +674,11 @@ class DB:
 
     # ── Chat messages ──
 
-    async def append_chat_message(self, role: str, content: str):
+    async def append_chat_message(self, role: str, content: str, proposals: str = "[]"):
         """Insert a message and trim to CHAT_WINDOW_SIZE."""
         await self._conn.execute(
-            "INSERT INTO chat_messages (role, content) VALUES (?, ?)",
-            (role, content),
+            "INSERT INTO chat_messages (role, content, proposals) VALUES (?, ?, ?)",
+            (role, content, proposals),
         )
         await self._conn.execute(
             "DELETE FROM chat_messages WHERE id NOT IN "
@@ -688,10 +690,10 @@ class DB:
     async def get_chat_messages(self) -> list[dict]:
         """Return up to CHAT_WINDOW_SIZE most recent messages, oldest first."""
         cursor = await self._conn.execute(
-            "SELECT role, content FROM chat_messages ORDER BY id ASC"
+            "SELECT role, content, proposals FROM chat_messages ORDER BY id ASC"
         )
         rows = await cursor.fetchall()
-        return [{"role": r["role"], "content": r["content"]} for r in rows]
+        return [{"role": r["role"], "content": r["content"], "proposals": r["proposals"]} for r in rows]
 
     async def clear_chat_messages(self):
         """Delete all chat messages."""

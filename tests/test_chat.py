@@ -503,3 +503,131 @@ class TestChatPersistence:
         assert msgs[1]["content"] == "Reply 1"
         assert msgs[2]["content"] == "Second"
         assert msgs[3]["content"] == "Reply 2"
+
+    @pytest.mark.asyncio
+    async def test_proposals_persisted_with_assistant_message(self, seeded_db):
+        """Proposals should be stored in the DB alongside the assistant message."""
+        llm = MockLLMClient([
+            MessageResponse(
+                content=[ContentBlock(
+                    type="tool_use", tool_name="propose_delete",
+                    tool_input={"table": "episodes", "ids": [1], "reason": "outdated"},
+                    tool_use_id="t1",
+                )],
+                stop_reason="tool_use", input_tokens=50, output_tokens=20,
+            ),
+            MessageResponse(
+                content=[ContentBlock(type="text", text="I've proposed the deletion.")],
+                stop_reason="end_turn", input_tokens=80, output_tokens=15,
+            ),
+        ])
+        app = _make_app(seeded_db, llm)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            await client.post("/api/memory/chat", json={"messages": [
+                {"role": "user", "content": "Delete episode 1"},
+            ]})
+            resp = await client.get("/api/memory/chat/history")
+        msgs = resp.json()["messages"]
+        assistant_msg = msgs[-1]
+        assert assistant_msg["role"] == "assistant"
+        proposals = json.loads(assistant_msg["proposals"])
+        assert len(proposals) == 1
+        assert proposals[0]["type"] == "delete"
+        assert proposals[0]["ids"] == [1]
+
+    @pytest.mark.asyncio
+    async def test_proposals_survive_page_refresh(self, seeded_db):
+        """After chat with proposals, reloading history should still have them."""
+        llm = MockLLMClient([
+            MessageResponse(
+                content=[ContentBlock(
+                    type="tool_use", tool_name="propose_update_playbook",
+                    tool_input={"name": "use-git-frequently", "confidence": 0.95, "reason": "more evidence"},
+                    tool_use_id="t1",
+                )],
+                stop_reason="tool_use", input_tokens=50, output_tokens=20,
+            ),
+            MessageResponse(
+                content=[ContentBlock(type="text", text="Proposed the update.")],
+                stop_reason="end_turn", input_tokens=80, output_tokens=15,
+            ),
+        ])
+        app = _make_app(seeded_db, llm)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            # First request: creates proposals
+            await client.post("/api/memory/chat", json={"messages": [
+                {"role": "user", "content": "Update confidence"},
+            ]})
+            # Simulate refresh: load history
+            resp = await client.get("/api/memory/chat/history")
+        msgs = resp.json()["messages"]
+        proposals = json.loads(msgs[-1]["proposals"])
+        assert len(proposals) == 1
+        assert proposals[0]["type"] == "update_playbook"
+        assert proposals[0]["fields"]["confidence"] == 0.95
+
+
+class TestProposalExecution:
+    """Test that approving proposals actually executes mutations."""
+
+    @pytest.mark.asyncio
+    async def test_approve_delete_executes(self, seeded_db):
+        """Approving a delete proposal should actually delete rows."""
+        # Verify episode exists
+        episodes = await seeded_db.get_all_episodes()
+        assert len(episodes) == 1
+
+        from engine.api.routes import router as routes_router
+        from fastapi import FastAPI
+        from engine.api.chat import router as chat_router
+        app = FastAPI()
+        app.include_router(chat_router, prefix="/api")
+        app.include_router(routes_router, prefix="")
+        app.state.db = seeded_db
+        app.state.llm = MockLLMClient([])
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/batch/delete", json={"table": "episodes", "ids": [1]})
+        assert resp.json()["deleted"] == 1
+        episodes = await seeded_db.get_all_episodes()
+        assert len(episodes) == 0
+
+    @pytest.mark.asyncio
+    async def test_approve_update_playbook_executes(self, seeded_db):
+        """Approving an update_playbook proposal should actually update the entry."""
+        # Verify initial state
+        playbooks = await seeded_db.get_all_playbooks()
+        assert playbooks[0]["confidence"] == 0.8
+
+        from engine.api.routes import router as routes_router
+        from fastapi import FastAPI
+        from engine.api.chat import router as chat_router
+        app = FastAPI()
+        app.include_router(chat_router, prefix="/api")
+        app.include_router(routes_router, prefix="")
+        app.state.db = seeded_db
+        app.state.llm = MockLLMClient([])
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/batch/update-playbook", json={
+                "name": "use-git-frequently", "confidence": 0.95,
+            })
+        assert resp.json()["updated"] is True
+        playbooks = await seeded_db.get_all_playbooks()
+        assert playbooks[0]["confidence"] == 0.95
+
+    @pytest.mark.asyncio
+    async def test_update_nonexistent_playbook_returns_error(self, seeded_db):
+        """Updating a playbook that doesn't exist should return error."""
+        from engine.api.routes import router as routes_router
+        from fastapi import FastAPI
+        app = FastAPI()
+        app.include_router(routes_router, prefix="")
+        app.state.db = seeded_db
+        app.state.llm = MockLLMClient([])
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            resp = await client.post("/batch/update-playbook", json={
+                "name": "nonexistent", "confidence": 0.5,
+            })
+        assert resp.json()["updated"] is False

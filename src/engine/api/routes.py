@@ -203,6 +203,33 @@ async def batch_delete(request: Request, body: BatchDelete):
     return {"deleted": deleted}
 
 
+class PlaybookUpdate(BaseModel):
+    name: str
+    context: str | None = None
+    action: str | None = None
+    confidence: float | None = None
+    maturity: str | None = None
+
+
+@router.post("/batch/update-playbook")
+async def update_playbook(request: Request, body: PlaybookUpdate):
+    db = request.app.state.db
+    # Get existing entry first
+    playbooks = await db.get_all_playbooks()
+    existing = next((p for p in playbooks if p["name"] == body.name), None)
+    if not existing:
+        return {"error": f"Playbook entry '{body.name}' not found", "updated": False}
+    await db.upsert_playbook(
+        name=body.name,
+        context=body.context if body.context is not None else existing["context"],
+        action=body.action if body.action is not None else existing["action"],
+        confidence=body.confidence if body.confidence is not None else existing["confidence"],
+        evidence=existing["evidence"],
+        maturity=body.maturity if body.maturity is not None else existing["maturity"],
+    )
+    return {"updated": True}
+
+
 # -- Engine management --
 
 
