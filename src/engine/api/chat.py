@@ -240,6 +240,13 @@ async def chat_history(request: Request):
     return {"messages": messages}
 
 
+@router.delete("/memory/chat/history")
+async def clear_chat_history(request: Request):
+    db = request.app.state.db
+    await db.clear_chat_messages()
+    return {"cleared": True}
+
+
 async def _chat_stream(db, llm, messages: list[dict]) -> AsyncGenerator[str, None]:
     """SSE stream generator for chat — tool-use loop with event emission."""
     tools = _make_read_tools(db)

@@ -6,6 +6,12 @@ async function get<T>(path: string): Promise<T> {
   return res.json();
 }
 
+async function del_<T>(path: string): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+  return res.json();
+}
+
 async function post<T>(path: string, body?: unknown): Promise<T> {
   const opts: RequestInit = { method: "POST" };
   if (body !== undefined) {
@@ -142,6 +148,7 @@ export const api = {
   pipelinePause: () => post<{ paused: boolean }>("/engine/pipeline/pause"),
   pipelineResume: () => post<{ paused: boolean }>("/engine/pipeline/resume"),
   chatHistory: () => get<{ messages: ChatMessage[] }>("/memory/chat/history"),
+  chatClear: () => del_("/memory/chat/history"),
   chat: async (
     messages: ChatMessage[],
     onToolCall: (name: string, label: string) => void,

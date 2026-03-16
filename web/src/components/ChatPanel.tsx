@@ -108,9 +108,33 @@ function MessageList({ messages, loading, toolLabel, onApprove, onReject, scroll
   );
 }
 
+function ChatInputBar({ onSend, onClear, loading, hasMessages }: {
+  onSend: (text: string) => void; onClear: () => void; loading: boolean; hasMessages: boolean;
+}) {
+  const [input, setInput] = useState("");
+  const submit = () => { const t = input.trim(); if (t && !loading) { setInput(""); onSend(t); } };
+  return (
+    <div className="max-w-3xl mx-auto w-full px-4 pb-3 pt-1">
+      <div className="flex items-center gap-3">
+        <input type="text" value={input} onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } }}
+          placeholder="Ask about your memory..." disabled={loading} data-testid="chat-input"
+          className="flex-1 h-10 rounded-md border bg-background px-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50" />
+        <Button className="h-10" onClick={submit} disabled={loading || !input.trim()}>Send</Button>
+      </div>
+      <div className="flex items-center justify-center gap-2 mt-2 text-[11px] text-muted-foreground/50">
+        <span>Memory chat — manages your observation data via AI. Only the last 20 messages are kept.</span>
+        {hasMessages && (
+          <button onClick={onClear} disabled={loading}
+            className="hover:text-muted-foreground transition-colors underline">Clear</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function ChatPanel() {
   const [messages, setMessages] = useState<UIMessage[]>([]);
-  const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [toolLabel, setToolLabel] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -128,10 +152,7 @@ export function ChatPanel() {
     setTimeout(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }), 50);
   };
 
-  const send = useCallback(async () => {
-    const text = input.trim();
-    if (!text || loading) return;
-    setInput("");
+  const send = useCallback(async (text: string) => {
     const userMsg: UIMessage = { role: "user", content: text };
     setMessages((prev) => [...prev, userMsg]);
     setLoading(true);
@@ -152,7 +173,7 @@ export function ChatPanel() {
     setLoading(false);
     setToolLabel("");
     scrollToBottom();
-  }, [input, loading, messages]);
+  }, [messages]);
 
   const handleApprove = useCallback(async (msgIdx: number, propIdx: number) => {
     const entry = messages[msgIdx]?.proposals?.[propIdx];
@@ -171,20 +192,13 @@ export function ChatPanel() {
     setMessages((prev) => updateProposalStatus(prev, msgIdx, propIdx, "rejected"));
   }, []);
 
+  const handleClear = useCallback(async () => { await api.chatClear(); setMessages([]); }, []);
+
   return (
     <div className="flex flex-col flex-1 min-h-0" data-testid="chat-panel">
       <MessageList messages={messages} loading={loading} toolLabel={toolLabel}
         onApprove={handleApprove} onReject={handleReject} scrollRef={scrollRef} />
-      <div className="max-w-3xl mx-auto w-full px-4 pb-3 pt-1">
-        <div className="flex items-center gap-3">
-          <input type="text" value={input} onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
-            placeholder="Ask about your memory..." disabled={loading} data-testid="chat-input"
-            className="flex-1 h-10 rounded-md border bg-background px-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50" />
-          <Button className="h-10" onClick={send} disabled={loading || !input.trim()}>Send</Button>
-        </div>
-        <p className="text-[11px] text-muted-foreground/50 text-center mt-2">Memory chat — manages your observation data via AI. Only the last 20 messages are kept.</p>
-      </div>
+      <ChatInputBar onSend={send} onClear={handleClear} loading={loading} hasMessages={messages.length > 0} />
     </div>
   );
 }
