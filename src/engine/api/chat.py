@@ -244,9 +244,11 @@ async def memory_chat(request: Request, body: ChatRequest):
         proposals: list[dict] = []
         total_input = 0
         total_output = 0
+        logger.info("chat: starting with %d messages", len(messages))
 
         for _turn in range(8):
             try:
+                logger.debug("chat: turn %d, calling amessages_create", _turn)
                 resp = await llm.amessages_create(
                     messages=messages,
                     model=MODEL_FAST,
@@ -254,7 +256,12 @@ async def memory_chat(request: Request, body: ChatRequest):
                     system=SYSTEM_PROMPT,
                 )
             except NotImplementedError:
+                logger.warning("chat: LLM backend does not support amessages_create")
                 yield _sse("error", {"message": "LLM backend does not support chat."})
+                return
+            except Exception:
+                logger.exception("chat: amessages_create failed")
+                yield _sse("error", {"message": "LLM call failed. Check engine logs."})
                 return
 
             total_input += resp.input_tokens
@@ -263,9 +270,12 @@ async def memory_chat(request: Request, body: ChatRequest):
             tool_uses = [b for b in resp.content if b.type == "tool_use"]
             text_blocks = [b for b in resp.content if b.type == "text"]
 
+            logger.debug("chat: turn %d got %d tool_uses, stop=%s", _turn, len(tool_uses), resp.stop_reason)
+
             if not tool_uses or resp.stop_reason == "end_turn":
                 reply = text_blocks[-1].text if text_blocks else ""
                 await _record_usage(db, total_input, total_output)
+                logger.info("chat: done, %d tokens in, %d out, %d proposals", total_input, total_output, len(proposals))
                 yield _sse("text", {"content": reply, "proposals": proposals,
                                     "input_tokens": total_input, "output_tokens": total_output})
                 return
@@ -286,6 +296,7 @@ async def memory_chat(request: Request, body: ChatRequest):
             tool_results = []
             for tu in tool_uses:
                 label = TOOL_LABELS.get(tu.tool_name, tu.tool_name)
+                logger.info("chat: calling tool %s", tu.tool_name)
                 yield _sse("tool_call", {"name": tu.tool_name, "label": label})
 
                 result, proposal = await _handle_tool(db, tu.tool_name, tu.tool_input or {})

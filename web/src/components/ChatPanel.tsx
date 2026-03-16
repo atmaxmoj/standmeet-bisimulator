@@ -82,12 +82,11 @@ function MessageList({ messages, loading, toolLabel, onApprove, onReject, scroll
   scrollRef: React.RefObject<HTMLDivElement | null>;
 }) {
   return (
-    <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-4">
+    <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-4 max-w-3xl mx-auto w-full">
       {messages.length === 0 && (
         <div className="text-muted-foreground text-center py-12">
           <p>Ask me anything about your memory.</p>
           <p className="text-xs mt-2">I can search episodes, playbooks, frames, audio, and more.</p>
-          <p className="text-[10px] mt-4 text-muted-foreground/60">Chat history is lost on refresh. Approved changes are permanent.</p>
         </div>
       )}
       {messages.map((msg, i) => (
@@ -162,12 +161,15 @@ export function ChatPanel() {
     <div className="flex flex-col flex-1 min-h-0" data-testid="chat-panel">
       <MessageList messages={messages} loading={loading} toolLabel={toolLabel}
         onApprove={handleApprove} onReject={handleReject} scrollRef={scrollRef} />
-      <div className="border-t p-4 flex gap-2">
-        <input type="text" value={input} onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
-          placeholder="Ask about your memory..." disabled={loading} data-testid="chat-input"
-          className="flex-1 h-9 rounded-md border bg-background px-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50" />
-        <Button size="sm" onClick={send} disabled={loading || !input.trim()}>Send</Button>
+      <div className="max-w-3xl mx-auto w-full px-4 pb-3 pt-1">
+        <div className="flex items-center gap-3">
+          <input type="text" value={input} onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
+            placeholder="Ask about your memory..." disabled={loading} data-testid="chat-input"
+            className="flex-1 h-10 rounded-md border bg-background px-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50" />
+          <Button className="h-10" onClick={send} disabled={loading || !input.trim()}>Send</Button>
+        </div>
+        <p className="text-[11px] text-muted-foreground/50 text-center mt-2">Memory chat — manages your observation data via AI. Only the last 20 messages are kept.</p>
       </div>
     </div>
   );
