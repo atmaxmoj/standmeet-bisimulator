@@ -1,0 +1,78 @@
+{
+  "episodes": [
+    {
+      "summary": "Visited job page (job-4-3) multiple times while frequently context-switching to entertainment (YouTube, Bilibili, episodes view). Pattern suggests procrastination or distraction during work task. No apparent task completion.",
+      "method": "Alternated between job page and entertainment content (Bilibili, YouTube video fpETS6q1Hww, episodes view)",
+      "turning_points": [
+        "Distracted from job page to Bilibili",
+        "Watched YouTube video",
+        "Returned to job page",
+        "Checked episodes view",
+        "Back to job page"
+      ],
+      "avoidance": [
+        "Did not engage deeply with job task",
+        "Constant context switching"
+      ],
+      "under_pressure": true,
+      "apps": [
+        "Browser"
+      ],
+      "started_at": "2026-03-16T18:50:04Z",
+      "ended_at": "2026-03-16T19:16:57Z"
+    },
+    {
+      "summary": "Brief communication check of two Discord channels across different servers. Took only 7 seconds total, likely just reviewing messages or notifications.",
+      "method": "Visited two Discord channel URLs sequentially",
+      "turning_points": [],
+      "avoidance": [],
+      "under_pressure": false,
+      "apps": [
+        "Browser"
+      ],
+      "started_at": "2026-03-16T19:35:01Z",
+      "ended_at": "2026-03-16T19:35:08Z"
+    },
+    {
+      "summary": "Extended 2.5-hour media consumption and learning session with YouTube videos and targeted content searches in Chinese (Taiwan sports content, egg noodle recipes, TouchDesigner tutorial). Switched repeatedly between episodes view and YouTube, suggesting mix of entertainment and learning goals.",
+      "method": "Cycled between episodes view and YouTube, performed specific content searches, discovered and accessed TouchDesigner tutorial playlist, briefly tried yfsp.tv streaming",
+      "turning_points": [
+        "Searched for Taiwan elementary school sports content",
+        "Searched for egg noodle cooking content",
+        "Pivoted to TouchDesigner tutorial research",
+        "Discovered TouchDesigner playlist"
+      ],
+      "avoidance": [
+        "Browsing pattern over sustained engagement with single content"
+      ],
+      "under_pressure": true,
+      "apps": [
+        "Browser"
+      ],
+      "started_at": "2026-03-16T20:49:00Z",
+      "ended_at": "2026-03-16T23:12:57Z"
+    },
+    {
+      "summary": "Late-night development debugging session using terminal commands to inspect engine logs and review Python code. Executed curl with json filtering to examine stage and token metrics, then reviewed cli.py code focusing on episode counting logic and cmd_experiment function structure.",
+      "method": "Ran curl log query command with grep filtering, examined JSON output for 'episode' stage with input/output token counts, then opened and reviewed code in editor examining episode counting and command structure",
+      "turning_points": [
+        "Log query returned episode stage data with token metrics",
+        "Shifted from log analysis to code review"
+      ],
+      "avoidance": [
+        "Did not run test execution or write new code",
+        "Did not use browser for research"
+      ],
+      "under_pressure": true,
+      "apps": [
+        "Terminal",
+        "Claude Code"
+      ],
+      "started_at": "2026-03-16T23:16:06Z",
+      "ended_at": "2026-03-16T23:19:08Z"
+    }
+  ],
+  "episode_count": 4,
+  "input_tokens": 10,
+  "output_tokens": 8978
+}

@@ -17,7 +17,7 @@ from huey import SqliteHuey, crontab
 from engine.config import Settings, MODEL_FAST, MODEL_DEEP, DAILY_COST_CAP_USD
 from engine.llm import create_client
 from engine.pipeline.collector import Frame
-from engine.pipeline.episode import EPISODE_PROMPT
+from engine.pipeline.episode import EPISODE_PROMPT, build_context
 from engine.pipeline.distill import DISTILL_PROMPT
 from engine.pipeline.routines import ROUTINE_PROMPT
 from engine.pipeline.filter import should_keep, detect_windows
@@ -253,14 +253,8 @@ def _load_frames(
 
 def _build_prompt(frames: list[Frame]) -> str:
     """Build text prompt from frames for Claude."""
-    context_lines = []
-    for f in frames:
-        text = f.text[:300].replace("\n", " ")
-        source_tag = f"[{f.source}]" if f.source != "screenpipe" else ""
-        context_lines.append(
-            f"[{f.timestamp}] {f.app_name}/{f.window_name}{source_tag}: {text}"
-        )
-    return EPISODE_PROMPT.format(context="\n".join(context_lines))
+    context = build_context(frames)
+    return EPISODE_PROMPT.format(context=context)
 
 
 def _store_episodes(

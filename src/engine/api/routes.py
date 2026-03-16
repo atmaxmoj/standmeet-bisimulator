@@ -261,6 +261,57 @@ async def engine_budget(request: Request):
     }
 
 
+class TryPromptRequest(BaseModel):
+    prompt: str
+    frame_limit: int = 30
+    event_limit: int = 20
+    output_path: str = ""  # save result JSON to this path if set
+
+
+@router.post("/engine/try-prompt")
+async def try_prompt(request: Request, body: TryPromptRequest):
+    """Run episode extraction with a custom prompt on real data. For experiments."""
+    import logging
+    logger = logging.getLogger(__name__)
+    from engine.pipeline.episode import build_context_from_dicts, extract_episodes
+
+    db = request.app.state.db
+    llm = request.app.state.llm
+
+    frames, _ = await db.get_frames(limit=body.frame_limit)
+    audio, _ = await db.get_audio_frames(limit=body.event_limit)
+    os_events, _ = await db.get_os_events(limit=body.event_limit)
+
+    if not frames:
+        return {"error": "No frames in DB", "episodes": []}
+
+    context = build_context_from_dicts(frames, audio, os_events)
+    logger.info("try-prompt: %d frames, %d audio, %d events, %d context chars",
+                len(frames), len(audio), len(os_events), len(context))
+
+    try:
+        episodes, resp = await extract_episodes(llm, context, prompt=body.prompt)
+    except Exception as e:
+        logger.exception("try-prompt: LLM call failed")
+        return {"error": str(e), "episodes": []}
+
+    result = {
+        "episodes": episodes,
+        "context_chars": len(context),
+        "input_tokens": resp.input_tokens,
+        "output_tokens": resp.output_tokens,
+    }
+
+    if body.output_path:
+        import json
+        from pathlib import Path
+        Path(body.output_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(body.output_path).write_text(json.dumps(result, indent=2, ensure_ascii=False))
+        logger.info("try-prompt: saved to %s", body.output_path)
+
+    return result
+
+
 @router.get("/engine/usage")
 async def engine_usage(request: Request, days: int = 7):
     db = request.app.state.db

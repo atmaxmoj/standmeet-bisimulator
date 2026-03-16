@@ -20,7 +20,7 @@ class ValidationError(Exception):
     pass
 
 
-def _strip_fence(text: str) -> str:
+def strip_fence(text: str) -> str:
     """Strip markdown code fences from LLM output."""
     text = text.strip()
     if text.startswith("```"):
@@ -35,7 +35,7 @@ def validate_episodes(text: str) -> list[dict]:
     Required fields: summary, apps (list), started_at, ended_at.
     Truncates to MAX_EPISODES_PER_WINDOW.
     """
-    text = _strip_fence(text)
+    text = strip_fence(text)
     try:
         data = json.loads(text)
     except json.JSONDecodeError as e:
@@ -73,7 +73,7 @@ def validate_playbooks(text: str) -> list[dict]:
     Required: name (kebab-case), confidence (0-1), maturity (enum), evidence (int list).
     Clamps confidence to [0.0, 1.0].
     """
-    text = _strip_fence(text)
+    text = strip_fence(text)
     try:
         data = json.loads(text)
     except json.JSONDecodeError as e:

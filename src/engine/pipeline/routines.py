@@ -6,6 +6,7 @@ import logging
 from engine.config import MODEL_DEEP
 from engine.db import DB
 from engine.llm import LLMClient
+from engine.pipeline.episode import parse_llm_json
 from engine.pipeline.memory_file import write_routine
 
 logger = logging.getLogger(__name__)
@@ -76,7 +77,7 @@ or variations (update steps to capture the common core)
 Output ONLY the JSON array, nothing else."""
 
 
-async def daily_routines(client: LLMClient, db: DB) -> int:
+async def daily_routines(client: LLMClient, db: DB, prompt_template: str = ROUTINE_PROMPT) -> int:
     """Run daily routine extraction: episodes + playbook → routines."""
     logger.info("starting routine extraction")
     episodes = await db.get_recent_episodes(days=1)
@@ -120,7 +121,7 @@ async def daily_routines(client: LLMClient, db: DB) -> int:
     )
 
     try:
-        prompt = ROUTINE_PROMPT.format(
+        prompt = prompt_template.format(
             playbooks=playbooks_text,
             routines=routines_text,
             episodes=episodes_text,
@@ -142,14 +143,7 @@ async def daily_routines(client: LLMClient, db: DB) -> int:
             cost_usd=cost_usd,
         )
 
-        # Parse JSON
-        text = resp.text.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1]
-            text = text.rsplit("```", 1)[0]
-        entries = json.loads(text)
-        if not isinstance(entries, list):
-            entries = [entries]
+        entries = parse_llm_json(resp.text)
         logger.debug("opus returned %d routines", len(entries))
 
         count = 0

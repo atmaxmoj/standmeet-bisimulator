@@ -1,0 +1,32 @@
+Input: 50 frames, 0 audio, 30 events
+Context: 25117 chars
+
+Running CURRENT prompt...
+  → 4 episodes, 8846 tokens out
+
+Running DEEP prompt...
+  → 3 episodes, 11435 tokens out
+
+Results saved to /data/experiment_results/deep_episode_result.json
+
+============================================================
+Current: 4 episodes
+  1. User checked a job listing page (localhost:4090/en/jobs/job-4-3), opened a chat interface, but got d
+  2. User visited Discord briefly, checking two different server channels in quick succession (7 seconds 
+  3. User spent nearly 2 hours alternating between a local episodes page and YouTube, watching various vi
+  4. User reviewed code logic in Claude Code (discussing extract_episodes function), fixed 2 compilation 
+
+Deep: 3 episodes
+  1. Over 52 minutes, systematically visited two local web applications (localhost:4090 jobs page and loc
+     methodology: Exploratory sequential browsing treating the application as a collection of disc
+     intent: Lightweight verification that the application's key pages are accessible and fun
+     mental_model: They view the application as a modular system where each view (jobs, chat, episo
+  2. Over 4 hours (interspersed, not continuous), watched YouTube and Bilibili videos on unrelated topics
+     methodology: Search-driven, ad-hoc discovery: identify topic → search → watch → search relate
+     intent: Threefold: (1) Break/leisure activity during development work, (2) Exploratory t
+     mental_model: Video platform understood as on-demand reference library for both hobby and work
+  3. In a focused 3+ minute terminal session, executed a test-verify-fix-debug cycle on a JavaScript/Node
+     methodology: Test-first checkpoint system: verify tests pass BEFORE running expensive process
+     intent: Primary: fix failing experiment/pipeline. Secondary: improve instrumentation and
+     mental_model: Multi-stage pipeline architecture: code → test → server → experiment. Each check
+============================================================

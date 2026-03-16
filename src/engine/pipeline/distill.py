@@ -6,6 +6,7 @@ import logging
 from engine.config import MODEL_DEEP
 from engine.db import DB
 from engine.llm import LLMClient
+from engine.pipeline.episode import parse_llm_json
 from engine.pipeline.memory_file import write_playbook
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,7 @@ Output ONLY the JSON array, nothing else."""
 async def daily_distill(
     client: LLMClient,
     db: DB,
+    prompt_template: str = DISTILL_PROMPT,
 ) -> int:
     """
     Run daily distillation: episodes → playbook entries.
@@ -117,7 +119,7 @@ async def daily_distill(
     )
 
     try:
-        prompt = DISTILL_PROMPT.format(
+        prompt = prompt_template.format(
             playbooks=playbooks_text, episodes=episodes_text,
         )
         resp = await client.acomplete(prompt, MODEL_DEEP)
@@ -142,14 +144,7 @@ async def daily_distill(
         )
         logger.debug("recorded usage: model=%s cost=$%.6f", MODEL_DEEP, cost_usd)
 
-        # Parse JSON (handle markdown code fences)
-        text = resp.text.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1]
-            text = text.rsplit("```", 1)[0]
-        entries = json.loads(text)
-        if not isinstance(entries, list):
-            entries = [entries]
+        entries = parse_llm_json(resp.text)
         logger.debug("opus returned %d playbook entries", len(entries))
 
         count = 0
