@@ -14,12 +14,14 @@ from pathlib import Path
 
 from huey import SqliteHuey, crontab
 
-from engine.config import Settings, MODEL_TASK, MODEL_WEEKLY
+from engine.config import Settings, MODEL_FAST, MODEL_DEEP, DAILY_COST_CAP_USD
 from engine.llm import create_client
 from engine.pipeline.collector import Frame
 from engine.pipeline.episode import EPISODE_PROMPT
 from engine.pipeline.distill import DISTILL_PROMPT
 from engine.pipeline.filter import should_keep, detect_windows
+from engine.pipeline.validate import validate_episodes, validate_playbooks, with_retry
+from engine.pipeline.budget import check_daily_budget
 
 logger = logging.getLogger(__name__)
 
@@ -308,6 +310,11 @@ def process_episode(
 
     conn = _get_conn()
     try:
+        # Budget check
+        if not check_daily_budget(conn, DAILY_COST_CAP_USD):
+            logger.warning("process_episode: daily budget exceeded, skipping")
+            return
+
         frames = _load_frames(conn, screen_ids, audio_ids, os_event_ids)
         if not frames:
             return
@@ -318,16 +325,18 @@ def process_episode(
         )
 
         prompt = _build_prompt(frames)
-        resp = _llm.complete(prompt, MODEL_TASK)
 
-        # Parse JSON response
-        text = resp.text.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1]
-            text = text.rsplit("```", 1)[0]
-        tasks = json.loads(text)
-        if not isinstance(tasks, list):
-            tasks = [tasks]
+        # LLM call with validation + retry
+        last_resp = [None]  # mutable container for closure
+
+        def _call_llm(retry_prompt):
+            p = retry_prompt if retry_prompt else prompt
+            resp = _llm.complete(p, MODEL_FAST)
+            last_resp[0] = resp
+            return resp.text
+
+        tasks = with_retry(_call_llm, validate_episodes, max_retries=1)
+        resp = last_resp[0]
 
         _store_episodes(conn, tasks, frames)
 
@@ -336,12 +345,12 @@ def process_episode(
         conn.execute(
             "INSERT INTO token_usage (model, layer, input_tokens, output_tokens, cost_usd) "
             "VALUES (?, ?, ?, ?, ?)",
-            (MODEL_TASK, "episode", resp.input_tokens, resp.output_tokens, cost),
+            (MODEL_FAST, "episode", resp.input_tokens, resp.output_tokens, cost),
         )
         conn.execute(
             "INSERT INTO pipeline_logs (stage, prompt, response, model, input_tokens, output_tokens, cost_usd) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            ("episode", prompt, resp.text, MODEL_TASK, resp.input_tokens, resp.output_tokens, cost),
+            ("episode", prompt, resp.text, MODEL_FAST, resp.input_tokens, resp.output_tokens, cost),
         )
         conn.commit()
 
@@ -364,6 +373,11 @@ def daily_distill_task():
     """Daily playbook distillation with Opus. Runs every day at 3am."""
     conn = _get_conn()
     try:
+        # Budget check
+        if not check_daily_budget(conn, DAILY_COST_CAP_USD):
+            logger.warning("daily distill: daily budget exceeded, skipping")
+            return
+
         episodes = conn.execute(
             "SELECT * FROM episodes WHERE created_at >= datetime('now', '-1 days') "
             "ORDER BY created_at",
@@ -398,27 +412,30 @@ def daily_distill_task():
         prompt = DISTILL_PROMPT.format(
             playbooks=playbooks_text, episodes=episodes_text,
         )
-        resp = _llm.complete(prompt, MODEL_WEEKLY)
+
+        # LLM call with validation + retry
+        last_resp = [None]
+
+        def _call_llm(retry_prompt):
+            p = retry_prompt if retry_prompt else prompt
+            resp = _llm.complete(p, MODEL_DEEP)
+            last_resp[0] = resp
+            return resp.text
+
+        entries = with_retry(_call_llm, validate_playbooks, max_retries=1)
+        resp = last_resp[0]
 
         cost = resp.cost_usd or 0
         conn.execute(
             "INSERT INTO token_usage (model, layer, input_tokens, output_tokens, cost_usd) "
             "VALUES (?, ?, ?, ?, ?)",
-            (MODEL_WEEKLY, "distill", resp.input_tokens, resp.output_tokens, cost),
+            (MODEL_DEEP, "distill", resp.input_tokens, resp.output_tokens, cost),
         )
         conn.execute(
             "INSERT INTO pipeline_logs (stage, prompt, response, model, input_tokens, output_tokens, cost_usd) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            ("distill", prompt, resp.text, MODEL_WEEKLY, resp.input_tokens, resp.output_tokens, cost),
+            ("distill", prompt, resp.text, MODEL_DEEP, resp.input_tokens, resp.output_tokens, cost),
         )
-
-        text = resp.text.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1]
-            text = text.rsplit("```", 1)[0]
-        entries = json.loads(text)
-        if not isinstance(entries, list):
-            entries = [entries]
 
         count = 0
         for entry in entries:
@@ -456,5 +473,86 @@ def daily_distill_task():
 
     except Exception:
         logger.exception("daily distill failed")
+    finally:
+        conn.close()
+
+
+# -- Weekly garbage collection --
+
+GC_PROMPT = """You are the garbage collection agent for a behavioral playbook system.
+
+You have two jobs:
+
+## 1. Playbook quality audit
+Review playbook entries for quality issues and clean up as needed.
+Tools: find_similar_pairs, check_evidence_exists, check_maturity_consistency,
+record_snapshot, merge_entries, deprecate_entry.
+
+Process:
+- Check maturity consistency issues
+- Look for similar pairs that might need merging
+- Investigate with check_evidence_exists
+- Take action: merge duplicates, deprecate invalid entries
+- Always record_snapshot before modifying an entry
+- Be conservative — when in doubt, leave entries alone
+
+## 2. Raw data management
+Manage disk/DB usage by cleaning up old processed data.
+Tools: get_data_stats, get_oldest_processed, purge_processed_frames,
+purge_processed_audio, purge_processed_os_events, purge_pipeline_logs.
+
+Process:
+- First call get_data_stats to see how much data exists
+- Then call get_oldest_processed to see how old it is
+- Based on the volume and age, decide what to purge and how aggressively
+- Only purge processed data (already extracted into episodes)
+- Keep enough recent data for debugging (at least a few days)
+- Pipeline logs can be more aggressively purged since they're debug-only
+
+Output a brief summary of what you did when finished."""
+
+
+@huey.periodic_task(crontab(hour="4", minute="0"))
+def daily_gc_task():
+    """Daily garbage collection: decay + agent-driven audit. Runs every day at 4am (after distill at 3am)."""
+    from engine.pipeline.decay import decay_confidence
+    from engine.pipeline.dedup import make_dedup_tools
+    from engine.pipeline.audit import make_audit_tools
+
+    conn = _get_conn()
+    try:
+        # Budget check
+        if not check_daily_budget(conn, DAILY_COST_CAP_USD):
+            logger.warning("daily_gc: daily budget exceeded, skipping")
+            return
+
+        # Phase 1: Deterministic decay
+        decayed = decay_confidence(conn)
+        logger.info("daily_gc: decayed %d entries", decayed)
+
+        # Phase 2: Agent-driven audit (only if LLM supports tools)
+        gc_tools = make_dedup_tools(conn) + make_audit_tools(conn)
+        try:
+            resp = _llm.complete_with_tools(
+                GC_PROMPT, MODEL_DEEP, gc_tools, max_turns=10,
+            )
+            cost = resp.cost_usd or 0
+            conn.execute(
+                "INSERT INTO token_usage (model, layer, input_tokens, output_tokens, cost_usd) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (MODEL_DEEP, "gc", resp.input_tokens, resp.output_tokens, cost),
+            )
+            conn.execute(
+                "INSERT INTO pipeline_logs (stage, prompt, response, model, input_tokens, output_tokens, cost_usd) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                ("gc", GC_PROMPT, resp.text, MODEL_DEEP, resp.input_tokens, resp.output_tokens, cost),
+            )
+            conn.commit()
+            logger.info("daily_gc: agent audit complete, cost=$%.4f", cost)
+        except NotImplementedError:
+            logger.info("daily_gc: LLM client does not support tools, skipping agent audit")
+
+    except Exception:
+        logger.exception("daily_gc failed")
     finally:
         conn.close()

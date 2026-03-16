@@ -5,7 +5,7 @@ import json
 import logging
 from pathlib import Path
 
-from engine.config import MODEL_TASK
+from engine.config import MODEL_FAST
 from engine.db import DB
 from engine.llm import LLMClient
 from engine.pipeline.collector import Frame
@@ -145,14 +145,14 @@ async def process_window(
     })
 
     try:
-        logger.debug("sending %d frames to haiku model=%s", len(frames), MODEL_TASK)
+        logger.debug("sending %d frames to haiku model=%s", len(frames), MODEL_FAST)
         prompt_text = content[-1]["text"]  # The text block with the full prompt
-        resp = await client.acomplete(prompt_text, MODEL_TASK)
+        resp = await client.acomplete(prompt_text, MODEL_FAST)
         logger.debug("haiku response: %d chars", len(resp.text))
 
         cost_usd = resp.cost_usd or 0
         await db.record_usage(
-            model=MODEL_TASK,
+            model=MODEL_FAST,
             layer="episode",
             input_tokens=resp.input_tokens,
             output_tokens=resp.output_tokens,
@@ -162,12 +162,12 @@ async def process_window(
             stage="episode",
             prompt=prompt_text,
             response=resp.text,
-            model=MODEL_TASK,
+            model=MODEL_FAST,
             input_tokens=resp.input_tokens,
             output_tokens=resp.output_tokens,
             cost_usd=cost_usd,
         )
-        logger.debug("recorded usage: model=%s cost=$%.6f", MODEL_TASK, cost_usd)
+        logger.debug("recorded usage: model=%s cost=$%.6f", MODEL_FAST, cost_usd)
 
         text = resp.text.strip()
         if text.startswith("```"):

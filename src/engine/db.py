@@ -103,6 +103,18 @@ CREATE TABLE IF NOT EXISTS pipeline_logs (
 
 CREATE INDEX IF NOT EXISTS idx_pipeline_logs_stage ON pipeline_logs(stage);
 CREATE INDEX IF NOT EXISTS idx_pipeline_logs_created_at ON pipeline_logs(created_at);
+
+CREATE TABLE IF NOT EXISTS playbook_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    playbook_name TEXT NOT NULL,
+    confidence REAL NOT NULL DEFAULT 0.0,
+    maturity TEXT NOT NULL DEFAULT 'nascent',
+    evidence TEXT NOT NULL DEFAULT '[]',
+    change_reason TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_playbook_history_name ON playbook_history(playbook_name);
 """
 
 
@@ -122,6 +134,7 @@ class DB:
             "ALTER TABLE frames ADD COLUMN processed INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE audio_frames ADD COLUMN processed INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE os_events ADD COLUMN processed INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE playbook_entries ADD COLUMN last_evidence_at TEXT",
         ]:
             try:
                 await self._conn.execute(sql)
@@ -366,6 +379,57 @@ class DB:
         ) as cur:
             rows = await cur.fetchall()
             return [dict(r) for r in rows]
+
+    # -- playbook history --
+
+    async def record_playbook_snapshot(
+        self,
+        playbook_name: str,
+        confidence: float,
+        maturity: str,
+        evidence: str,
+        change_reason: str = "",
+    ):
+        """Record a snapshot of a playbook entry's state in history."""
+        await self._conn.execute(
+            "INSERT INTO playbook_history (playbook_name, confidence, maturity, evidence, change_reason) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (playbook_name, confidence, maturity, evidence, change_reason),
+        )
+        await self._conn.commit()
+
+    async def get_playbook_history(self, name: str) -> list[dict]:
+        async with self._conn.execute(
+            "SELECT * FROM playbook_history WHERE playbook_name = ? ORDER BY created_at",
+            (name,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+    # -- episode search (for recall tools) --
+
+    async def search_episodes_by_keyword(self, query: str, limit: int = 10) -> list[dict]:
+        async with self._conn.execute(
+            "SELECT id, summary, app_names, started_at, ended_at "
+            "FROM episodes WHERE summary LIKE ? ORDER BY id DESC LIMIT ?",
+            (f"%{query}%", limit),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+    async def get_episodes_by_app(self, app_name: str, limit: int = 20) -> list[dict]:
+        async with self._conn.execute(
+            "SELECT id, summary, app_names, started_at, ended_at "
+            "FROM episodes WHERE app_names LIKE ? ORDER BY id DESC LIMIT ?",
+            (f"%{app_name}%", limit),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+    async def get_episodes_by_timerange(self, hours: int = 24) -> list[dict]:
+        async with self._conn.execute(
+            "SELECT id, summary, app_names, started_at, ended_at "
+            "FROM episodes WHERE created_at >= datetime('now', ?) ORDER BY created_at DESC",
+            (f"-{hours} hours",),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
 
     # -- token usage --
 

@@ -2,21 +2,23 @@ from pydantic_settings import BaseSettings
 
 
 # ┌─────────────────────────────────────────────────────────────┐
-# │  Model costs (2026-03 pricing)                              │
+# │  Model tiers (2026-03 pricing)                              │
 # │                                                             │
-# │  HAIKU  — task-level episodes     ~$0.01/episode            │
-# │  OPUS   — weekly playbook distill ~$1-2/week                │
+# │  FAST (Haiku) — episode extraction      ~$0.01/episode      │
+# │  DEEP (Opus)  — daily distill + GC      ~$1-2/run           │
 # │                                                             │
-# │  DO NOT swap these. Haiku on task-level keeps costs ~$0.    │
-# │  Opus on task-level would cost ~$50/day.                    │
+# │  DO NOT swap these. Opus on episode-level = ~$50/day.       │
 # └─────────────────────────────────────────────────────────────┘
-MODEL_TASK = "claude-haiku-4-5-20251001"
-MODEL_WEEKLY = "claude-opus-4-6"
+MODEL_FAST = "claude-haiku-4-5-20251001"
+MODEL_DEEP = "claude-opus-4-6"
+
+# Budget cap
+DAILY_COST_CAP_USD = 2.0
 
 # Per-token pricing (USD) — 2026-03
 TOKEN_COSTS = {
-    MODEL_TASK: {"input": 0.80 / 1_000_000, "output": 4.00 / 1_000_000},
-    MODEL_WEEKLY: {"input": 15.00 / 1_000_000, "output": 75.00 / 1_000_000},
+    MODEL_FAST: {"input": 0.80 / 1_000_000, "output": 4.00 / 1_000_000},
+    MODEL_DEEP: {"input": 15.00 / 1_000_000, "output": 75.00 / 1_000_000},
 }
 
 

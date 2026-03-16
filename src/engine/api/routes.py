@@ -177,6 +177,13 @@ async def list_playbooks(request: Request):
     return {"playbooks": playbooks}
 
 
+@router.get("/memory/playbooks/{name}/history")
+async def playbook_history(request: Request, name: str):
+    db = request.app.state.db
+    history = await db.get_playbook_history(name)
+    return {"name": name, "history": history}
+
+
 # -- Batch delete --
 
 
@@ -203,6 +210,27 @@ async def engine_status(request: Request):
     db = request.app.state.db
     status = await db.get_status()
     return status
+
+
+@router.get("/engine/budget")
+async def engine_budget(request: Request):
+    """Get current daily spend vs budget cap."""
+    import sqlite3
+    from engine.config import Settings, DAILY_COST_CAP_USD
+    from engine.pipeline.budget import get_daily_spend
+
+    settings = Settings()
+    conn = sqlite3.connect(settings.db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        spend = get_daily_spend(conn)
+    finally:
+        conn.close()
+    return {
+        "daily_spend_usd": round(spend, 4),
+        "daily_cap_usd": DAILY_COST_CAP_USD,
+        "under_budget": spend < DAILY_COST_CAP_USD,
+    }
 
 
 @router.get("/engine/usage")

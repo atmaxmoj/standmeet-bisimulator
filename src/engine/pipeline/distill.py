@@ -3,7 +3,7 @@
 import json
 import logging
 
-from engine.config import MODEL_WEEKLY
+from engine.config import MODEL_DEEP
 from engine.db import DB
 from engine.llm import LLMClient
 
@@ -119,12 +119,12 @@ async def daily_distill(
         prompt = DISTILL_PROMPT.format(
             playbooks=playbooks_text, episodes=episodes_text,
         )
-        resp = await client.acomplete(prompt, MODEL_WEEKLY)
+        resp = await client.acomplete(prompt, MODEL_DEEP)
         logger.debug("opus response: %d chars", len(resp.text))
 
         cost_usd = resp.cost_usd or 0
         await db.record_usage(
-            model=MODEL_WEEKLY,
+            model=MODEL_DEEP,
             layer="distill",
             input_tokens=resp.input_tokens,
             output_tokens=resp.output_tokens,
@@ -134,12 +134,12 @@ async def daily_distill(
             stage="distill",
             prompt=prompt,
             response=resp.text,
-            model=MODEL_WEEKLY,
+            model=MODEL_DEEP,
             input_tokens=resp.input_tokens,
             output_tokens=resp.output_tokens,
             cost_usd=cost_usd,
         )
-        logger.debug("recorded usage: model=%s cost=$%.6f", MODEL_WEEKLY, cost_usd)
+        logger.debug("recorded usage: model=%s cost=$%.6f", MODEL_DEEP, cost_usd)
 
         # Parse JSON (handle markdown code fences)
         text = resp.text.strip()

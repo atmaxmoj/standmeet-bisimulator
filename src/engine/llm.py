@@ -13,12 +13,23 @@ Priority (first match wins):
 """
 
 import asyncio
+import json
 import logging
 import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class ToolDef:
+    """Tool definition for agent tool-use loop."""
+    name: str
+    description: str
+    input_schema: dict
+    handler: Callable[..., Any]
 
 
 @dataclass
@@ -42,6 +53,18 @@ class LLMClient(ABC):
     async def acomplete(self, prompt: str, model: str) -> LLMResponse:
         """Async version of complete."""
         ...
+
+    def complete_with_tools(
+        self,
+        prompt: str,
+        model: str,
+        tools: list[ToolDef],
+        max_turns: int = 5,
+    ) -> LLMResponse:
+        """Multi-turn tool-use loop. Default raises NotImplementedError."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support tool use"
+        )
 
 
 class AgentSDKClient(LLMClient):
@@ -123,6 +146,90 @@ class DirectAPIClient(LLMClient):
             text=raw,
             input_tokens=usage.input_tokens,
             output_tokens=usage.output_tokens,
+        )
+
+    def complete_with_tools(
+        self,
+        prompt: str,
+        model: str,
+        tools: list[ToolDef],
+        max_turns: int = 5,
+    ) -> LLMResponse:
+        """Multi-turn tool-use loop using Anthropic SDK."""
+        # Build tool definitions for the API
+        api_tools = [
+            {
+                "name": t.name,
+                "description": t.description,
+                "input_schema": t.input_schema,
+            }
+            for t in tools
+        ]
+        tool_handlers = {t.name: t.handler for t in tools}
+
+        messages = [{"role": "user", "content": prompt}]
+        total_input = 0
+        total_output = 0
+        final_text = ""
+
+        for turn in range(max_turns):
+            response = self._sync.messages.create(
+                model=model,
+                max_tokens=8192,
+                messages=messages,
+                tools=api_tools,
+            )
+
+            total_input += response.usage.input_tokens
+            total_output += response.usage.output_tokens
+
+            # Check if the model wants to use tools
+            tool_uses = [b for b in response.content if b.type == "tool_use"]
+            text_blocks = [b for b in response.content if b.type == "text"]
+
+            if text_blocks:
+                final_text = text_blocks[-1].text
+
+            if not tool_uses or response.stop_reason == "end_turn":
+                # No more tool calls, we're done
+                if not final_text and text_blocks:
+                    final_text = text_blocks[0].text
+                break
+
+            # Execute tool calls and build tool_result messages
+            messages.append({"role": "assistant", "content": response.content})
+            tool_results = []
+            for tool_use in tool_uses:
+                handler = tool_handlers.get(tool_use.name)
+                if handler:
+                    try:
+                        result = handler(**tool_use.input)
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": tool_use.id,
+                            "content": json.dumps(result, default=str),
+                        })
+                    except Exception as e:
+                        logger.warning("Tool %s failed: %s", tool_use.name, e)
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": tool_use.id,
+                            "content": json.dumps({"error": str(e)}),
+                            "is_error": True,
+                        })
+                else:
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": tool_use.id,
+                        "content": json.dumps({"error": f"Unknown tool: {tool_use.name}"}),
+                        "is_error": True,
+                    })
+            messages.append({"role": "user", "content": tool_results})
+
+        return LLMResponse(
+            text=final_text,
+            input_tokens=total_input,
+            output_tokens=total_output,
         )
 
 
