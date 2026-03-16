@@ -95,6 +95,7 @@ class AgentSDKClient(LLMClient):
 
         result_text = ""
         cost_usd = None
+        usage: dict = {}
         async for msg in query(
             prompt=prompt,
             options=ClaudeAgentOptions(
@@ -108,8 +109,14 @@ class AgentSDKClient(LLMClient):
             if isinstance(msg, ResultMessage):
                 result_text = msg.result or ""
                 cost_usd = msg.total_cost_usd
+                usage = msg.usage or {}
 
-        return LLMResponse(text=result_text, cost_usd=cost_usd)
+        return LLMResponse(
+            text=result_text,
+            cost_usd=cost_usd,
+            input_tokens=usage.get("input_tokens", 0),
+            output_tokens=usage.get("output_tokens", 0),
+        )
 
 
 class DirectAPIClient(LLMClient):
