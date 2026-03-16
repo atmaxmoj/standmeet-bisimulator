@@ -127,7 +127,7 @@ function ChatInputBar({ onSend, onClear, loading, hasMessages }: {
     <div className="max-w-3xl mx-auto w-full px-4 pb-3 pt-1">
       <div className="flex items-center gap-3">
         <input type="text" value={input} onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } }}
+          onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit(); } }}
           placeholder="Ask about your memory..." disabled={loading} data-testid="chat-input"
           className="flex-1 h-10 rounded-md border bg-background px-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50" />
         <Button className="h-10" onClick={submit} disabled={loading || !input.trim()}>Send</Button>

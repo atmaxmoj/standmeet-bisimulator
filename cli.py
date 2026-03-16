@@ -286,6 +286,21 @@ def cmd_test():
     suite = sys.argv[2] if len(sys.argv) > 2 else "all"
     results = []
 
+    # Run code checks first (same as pre-commit hooks)
+    print("==> Running code checks...")
+    checks = [
+        ("ruff", ["uv", "run", "ruff", "check", "src/", "tests/"], ROOT),
+        ("tsc", ["npx", "tsc", "--noEmit"], ROOT / "web"),
+        ("eslint", ["npx", "eslint", "src/", "--max-warnings", "0"], ROOT / "web"),
+        ("knip", ["npx", "knip"], ROOT / "web"),
+    ]
+    for name, cmd, cwd in checks:
+        r = run(cmd, cwd=cwd)
+        if r.returncode != 0:
+            print(f"\n==> CODE CHECK FAILED: {name}")
+            sys.exit(1)
+    print("==> All code checks passed\n")
+
     extra = platform_extra()
 
     if suite in ("capture", "all") and extra:
