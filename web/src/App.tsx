@@ -30,7 +30,7 @@ const NAV: NavGroup[] = [
       { key: "episodes", label: "Episodes" },
       { key: "playbooks", label: "Playbook" },
       { key: "routines", label: "Routines" },
-      { key: "chat", label: "Chat" },
+      { key: "chat", label: "Manage" },
     ],
   },
   {

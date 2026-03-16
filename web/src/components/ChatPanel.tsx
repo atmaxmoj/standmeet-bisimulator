@@ -96,7 +96,7 @@ function MessageList({ messages, loading, toolLabel, onApprove, onReject, onStop
     <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-4 max-w-3xl mx-auto w-full">
       {messages.length === 0 && (
         <div className="text-muted-foreground text-center py-12">
-          <p>Ask me anything about your memory.</p>
+          <p>Manage your observation data through AI.</p>
           <p className="text-xs mt-2">I can search episodes, playbooks, frames, audio, and more.</p>
         </div>
       )}
@@ -128,12 +128,12 @@ function ChatInputBar({ onSend, onClear, loading, hasMessages }: {
       <div className="flex items-center gap-3">
         <input type="text" value={input} onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); submit(); } }}
-          placeholder="Ask about your memory..." disabled={loading} data-testid="chat-input"
+          placeholder="Search, review, or modify your data..." disabled={loading} data-testid="chat-input"
           className="flex-1 h-10 rounded-md border bg-background px-3 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50" />
         <Button className="h-10" onClick={submit} disabled={loading || !input.trim()}>Send</Button>
       </div>
       <div className="flex items-center justify-center gap-2 mt-2 text-[11px] text-muted-foreground/50">
-        <span>Memory chat — manages your observation data via AI. Only the last 20 messages are kept.</span>
+        <span>AI-powered memory management. Only the last 20 messages are kept.</span>
         {hasMessages && <span>·</span>}
         {hasMessages && (
           <AlertDialog>
