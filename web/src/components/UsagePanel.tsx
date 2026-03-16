@@ -6,6 +6,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
+import {
+  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
+  Tooltip, ResponsiveContainer, Legend,
+} from "recharts";
 
 function StatCard({ value, label }: { value: string; label: string }) {
   return (
@@ -48,22 +52,43 @@ function LayerTable({ rows }: { rows: UsageSummary["by_layer"] }) {
   );
 }
 
-function DailyChart({ days }: { days: UsageSummary["by_day"] }) {
+function DailyCostChart({ days }: { days: UsageSummary["by_day"] }) {
   if (!days.length) return <p className="text-muted-foreground text-sm text-center py-4">No daily data yet</p>;
-  const maxCost = Math.max(...days.map((d) => d.total_cost), 0.01);
+  const data = [...days].reverse();
   return (
-    <div className="space-y-2">
-      {days.map((d) => (
-        <div key={d.day} className="flex items-center gap-3">
-          <span className="text-xs text-muted-foreground w-20 shrink-0">{d.day}</span>
-          <div className="flex-1 h-2 bg-secondary rounded-full overflow-hidden">
-            <div className="h-full bg-primary rounded-full transition-all" style={{ width: `${(d.total_cost / maxCost) * 100}%` }} />
-          </div>
-          <span className="text-xs font-medium w-16 text-right">${d.total_cost.toFixed(4)}</span>
-          <span className="text-[10px] text-muted-foreground w-14 text-right">{d.call_count} calls</span>
-        </div>
-      ))}
-    </div>
+    <ResponsiveContainer width="100%" height={240}>
+      <BarChart data={data} margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+        <XAxis dataKey="day" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} tickFormatter={(v) => v.slice(5)} />
+        <YAxis tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} tickFormatter={(v) => `$${v}`} width={50} />
+        <Tooltip
+          contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 6, fontSize: 12 }}
+          labelStyle={{ color: "hsl(var(--foreground))" }}
+          formatter={(v) => [`$${Number(v).toFixed(4)}`, "Cost"]}
+        />
+        <Bar dataKey="total_cost" fill="hsl(var(--primary))" radius={[3, 3, 0, 0]} name="Cost" />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+function DailyCallsChart({ days }: { days: UsageSummary["by_day"] }) {
+  if (!days.length) return null;
+  const data = [...days].reverse();
+  return (
+    <ResponsiveContainer width="100%" height={200}>
+      <LineChart data={data} margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+        <XAxis dataKey="day" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} tickFormatter={(v) => v.slice(5)} />
+        <YAxis tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} width={40} />
+        <Tooltip
+          contentStyle={{ backgroundColor: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 6, fontSize: 12 }}
+          labelStyle={{ color: "hsl(var(--foreground))" }}
+        />
+        <Legend wrapperStyle={{ fontSize: 11 }} />
+        <Line type="monotone" dataKey="call_count" stroke="#22c55e" strokeWidth={2} dot={{ r: 3 }} name="API Calls" />
+      </LineChart>
+    </ResponsiveContainer>
   );
 }
 
@@ -98,8 +123,12 @@ export function UsagePanel() {
         <CardContent><LayerTable rows={data.by_layer} /></CardContent>
       </Card>
       <Card>
-        <CardHeader><CardTitle className="text-sm">Daily Breakdown</CardTitle></CardHeader>
-        <CardContent><DailyChart days={data.by_day} /></CardContent>
+        <CardHeader><CardTitle className="text-sm">Daily Cost</CardTitle></CardHeader>
+        <CardContent><DailyCostChart days={data.by_day} /></CardContent>
+      </Card>
+      <Card>
+        <CardHeader><CardTitle className="text-sm">Daily API Calls</CardTitle></CardHeader>
+        <CardContent><DailyCallsChart days={data.by_day} /></CardContent>
       </Card>
     </div>
   );

@@ -79,7 +79,7 @@ test.describe("Dashboard", () => {
     await expect(panel.getByText("Total Cost")).toBeVisible();
     await expect(panel.getByText("Input Tokens")).toBeVisible();
     await expect(panel.getByText("Output Tokens")).toBeVisible();
-    await expect(panel.getByText("API Calls")).toBeVisible();
+    await expect(panel.getByText("API Calls", { exact: true })).toBeVisible();
     await page.screenshot({ path: "tests/screenshots/usage.png", fullPage: true });
   });
 
