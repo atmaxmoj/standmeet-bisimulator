@@ -15,13 +15,16 @@ from pathlib import Path
 from huey import SqliteHuey, crontab
 
 from engine.config import Settings, MODEL_FAST, MODEL_DEEP, DAILY_COST_CAP_USD
+from engine.domain.entities.frame import Frame
+from engine.domain.prompts.episode import EPISODE_PROMPT
+from engine.domain.prompts.playbook import PLAYBOOK_PROMPT
+from engine.domain.prompts.routine import ROUTINE_PROMPT
 from engine.llm import create_client
-from engine.pipeline.collector import Frame
-from engine.pipeline.episode import EPISODE_PROMPT, build_context
-from engine.pipeline.distill import DISTILL_PROMPT
-from engine.pipeline.routines import ROUTINE_PROMPT
-from engine.pipeline.filter import should_keep, detect_windows
-from engine.pipeline.validate import validate_episodes, validate_playbooks, with_retry
+from engine.pipeline.stages.extract import build_context, parse_llm_json
+from engine.pipeline.stages.distill import format_episodes, format_playbooks
+from engine.pipeline.stages.compose import format_playbooks_for_routines, format_routines, format_episodes_for_routines
+from engine.pipeline.stages.filter import should_keep, detect_windows
+from engine.pipeline.stages.validate import validate_episodes, validate_playbooks, with_retry
 from engine.pipeline.budget import check_daily_budget
 
 logger = logging.getLogger(__name__)
@@ -386,26 +389,12 @@ def daily_distill_task():
             "SELECT * FROM playbook_entries ORDER BY confidence DESC",
         ).fetchall()
 
-        episodes_text = "\n\n".join(
-            f"Episode #{e['id']} ({e['started_at']} to {e['ended_at']}):\n{e['summary']}"
-            for e in episodes
-        )
+        episodes_list = [dict(e) for e in episodes]
+        existing_list = [dict(e) for e in existing]
 
-        playbooks_text = (
-            "\n\n".join(
-                f"- **{p['name']}** (confidence: {p['confidence']}, "
-                f"maturity: {p['maturity'] or 'nascent'})\n"
-                f"  Context: {p['context']}\n"
-                f"  Action: {p['action']}\n"
-                f"  Evidence: {p['evidence']}"
-                for p in existing
-            )
-            if existing
-            else "(none yet — this is the first distillation)"
-        )
-
-        prompt = DISTILL_PROMPT.format(
-            playbooks=playbooks_text, episodes=episodes_text,
+        prompt = PLAYBOOK_PROMPT.format(
+            playbooks=format_playbooks(existing_list),
+            episodes=format_episodes(episodes_list),
         )
 
         # LLM call with validation + retry
@@ -501,33 +490,14 @@ def daily_routines_task():
             "SELECT * FROM routines ORDER BY confidence DESC",
         ).fetchall()
 
-        episodes_text = "\n\n".join(
-            f"Episode #{e['id']} ({e['started_at']} to {e['ended_at']}):\n{e['summary']}"
-            for e in episodes
-        )
-
-        playbooks_text = (
-            "\n".join(
-                f"- **{p['name']}** ({p['confidence']:.1f}): {p['context']} → {p['action']}"
-                for p in playbooks
-            )
-            if playbooks
-            else "(no playbook entries yet)"
-        )
-
-        routines_text = (
-            "\n\n".join(
-                f"- **{r['name']}** (confidence: {r['confidence']}, maturity: {r['maturity']})\n"
-                f"  Trigger: {r['trigger']}\n  Goal: {r['goal']}\n"
-                f"  Steps: {r['steps']}\n  Uses: {r['uses']}"
-                for r in existing_routines
-            )
-            if existing_routines
-            else "(none yet)"
-        )
+        episodes_list = [dict(e) for e in episodes]
+        playbooks_list = [dict(p) for p in playbooks]
+        routines_list = [dict(r) for r in existing_routines]
 
         prompt = ROUTINE_PROMPT.format(
-            playbooks=playbooks_text, routines=routines_text, episodes=episodes_text,
+            playbooks=format_playbooks_for_routines(playbooks_list),
+            routines=format_routines(routines_list),
+            episodes=format_episodes_for_routines(episodes_list),
         )
 
         resp = _llm.complete(prompt, MODEL_DEEP)
@@ -543,14 +513,7 @@ def daily_routines_task():
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
             ("routines", prompt, resp.text, MODEL_DEEP, resp.input_tokens, resp.output_tokens, cost),
         )
-
-        text = resp.text.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1]
-            text = text.rsplit("```", 1)[0]
-        entries = json.loads(text)
-        if not isinstance(entries, list):
-            entries = [entries]
+        entries = parse_llm_json(resp.text)
 
         count = 0
         for entry in entries:
