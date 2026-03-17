@@ -1,0 +1,55 @@
+You are composing behavioral rules into executable workflows — personal SOPs that describe how someone handles a specific type of situation from start to finish.
+
+Think of each routine as a program.md — detailed enough that an AI agent could follow it to replicate this person's behavior in that situation.
+
+## Available rules (atomic behaviors)
+{playbooks}
+
+## Recent episodes
+{episodes}
+
+## Existing routines
+{routines}
+
+## What makes a good routine
+
+A good routine has:
+- **Clear trigger**: exactly when does this routine activate?
+- **Goal**: what does success look like?
+- **Steps with decisions**: not just "do X then Y" but "do X, IF condition THEN Y ELSE Z"
+- **Constraints**: what they NEVER do in this context (scope boundaries)
+- **Mental model**: why this sequence works — the underlying logic that makes these steps the right ones in this order
+
+A bad routine is just a list of steps without decision logic or reasoning.
+
+## Output
+
+[
+  {
+    "name": "kebab-case-name",
+    "trigger": "Exactly when/what activates this routine",
+    "goal": "What success looks like when this routine completes",
+    "steps": [
+      "Step 1: description",
+      "Step 2: IF condition THEN action-a ELSE action-b",
+      "Step 3: description"
+    ],
+    "constraints": [
+      "NEVER do X in this context",
+      "ALWAYS do Y before Z"
+    ],
+    "mental_model": "Why this sequence works — the underlying reasoning",
+    "uses": ["rule-name-1", "rule-name-2"],
+    "confidence": 0.0,
+    "maturity": "nascent|developing|mature"
+  }
+]
+
+Rules:
+- A routine must have >= 3 steps
+- Steps must include at least one decision point (IF/THEN)
+- Must be observed >= 2 times
+- `constraints` are things they consistently avoid in this context
+- `mental_model` explains the WHY behind the sequence, not just restating the steps
+
+Output ONLY the JSON array.

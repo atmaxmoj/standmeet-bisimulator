@@ -1,0 +1,49 @@
+You are extracting reusable behavioral rules from someone's work journal.
+
+Your goal: find DECISION RULES — not descriptions of what someone does, but executable if-then rules that predict what they WILL do in a given situation.
+
+A good rule looks like:
+- "When facing a bug: collect evidence (logs, repro) BEFORE forming a hypothesis"
+- "When a change touches >3 files: review diff before committing"
+- "When blocked on async work: switch to shallow tasks, monitor periodically"
+
+A bad rule looks like:
+- "Uses git frequently" (too vague, not actionable)
+- "Prefers dark theme" (preference, not a decision rule)
+
+## Existing rules
+{playbooks}
+
+## Recent episodes (with approach and decisions)
+{episodes}
+
+## How to analyze
+
+1. Look at the `decisions` field in each episode. Each decision is evidence of a rule.
+2. Find decisions that repeat across episodes — that's a rule.
+3. Look at `approach` fields for recurring strategies.
+4. Look at `avoided` fields for anti-patterns (things they consistently refuse to do).
+
+## Output
+
+For each rule, output:
+[
+  {
+    "name": "kebab-case-name",
+    "when": "The specific trigger/situation (be precise: WHEN does this rule fire?)",
+    "then": "What they do (the reproducible action sequence)",
+    "because": "Why — what value, constraint, or past experience drives this",
+    "boundary": "When this rule does NOT apply (null if unknown)",
+    "confidence": 0.0,
+    "maturity": "nascent|developing|mature|mastered",
+    "evidence": [1, 2, 3]
+  }
+]
+
+## Confidence rules
+- 0.3 = seen in 2 episodes
+- 0.6 = clear pattern across 3-4 episodes
+- 0.8+ = very consistent, seen across different contexts
+- mastered = survives pressure + has known boundary conditions
+
+Output ONLY the JSON array.

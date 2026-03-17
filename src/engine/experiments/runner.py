@@ -1,9 +1,15 @@
-"""Experiment runner — runs inside Docker container.
+"""Experiment runner — full chain L1→L2→L3 inside Docker container.
 
-Loads a frames fixture, runs multiple prompt variants through the pipeline,
-saves each result immediately.
+Each experiment variant is a directory in /app/tests/experiments/prompts/<name>/
+containing up to 3 files:
+  - episode.txt   (L1: frames → episodes)
+  - playbook.txt  (L2: episodes → playbook entries)
+  - routine.txt   (L3: episodes + playbook → routines)
 
-Usage: npm run experiment [-- <fixture_path>]
+Missing files fall back to production prompts.
+Uses {context}, {episodes}, {playbooks}, {routines} as placeholders.
+
+Usage: npm run experiment
 """
 
 import json
@@ -20,45 +26,133 @@ logger = logging.getLogger(__name__)
 
 RESULTS_DIR = Path("/data/experiment_results")
 DEFAULT_FIXTURE = Path("/app/tests/experiments/fixtures/frames.json")
+PROMPTS_DIR = Path("/app/tests/experiments/prompts")
 
 
-def load_fixture(path: Path) -> dict:
-    data = json.loads(path.read_text())
-    logger.info("Loaded fixture: %d frames, %d audio, %d events",
-                len(data["frames"]), len(data.get("audio", [])), len(data.get("os_events", [])))
-    return data
-
-
-def load_prompts() -> dict[str, str]:
-    """Load all prompt variants.
-
-    Convention: files in /app/tests/experiments/prompts/*.txt
-    Use {context} as placeholder (NOT Python .format() style).
-    Baseline uses the production prompt (auto-converted from .format() style).
-    """
-    prompts_dir = Path("/app/tests/experiments/prompts")
-    result = {}
-    if prompts_dir.exists():
-        for f in sorted(prompts_dir.glob("*.txt")):
-            result[f.stem] = f.read_text()
-    # Always include production prompt as baseline, converting {{ → { for .replace() compat
+def _production_prompts() -> dict[str, str]:
+    """Load production prompts, converting .format() style to .replace() style."""
     from engine.domain.prompts.episode import EPISODE_PROMPT
-    baseline = EPISODE_PROMPT.replace("{{", "{").replace("}}", "}")
-    result.setdefault("baseline", baseline)
+    from engine.domain.prompts.playbook import PLAYBOOK_PROMPT
+    from engine.domain.prompts.routine import ROUTINE_PROMPT
+
+    def convert(p):
+        return p.replace("{{", "{").replace("}}", "}")
+
+    return {
+        "episode": convert(EPISODE_PROMPT),
+        "playbook": convert(PLAYBOOK_PROMPT),
+        "routine": convert(ROUTINE_PROMPT),
+    }
+
+
+def load_variant(name: str, production: dict[str, str]) -> dict[str, str]:
+    """Load a prompt variant. Falls back to production for missing layers."""
+    variant_dir = PROMPTS_DIR / name
+    result = dict(production)  # start with production defaults
+    if variant_dir.is_dir():
+        for layer in ("episode", "playbook", "routine"):
+            f = variant_dir / f"{layer}.txt"
+            if f.exists():
+                result[layer] = f.read_text()
+                logger.info("  [%s] loaded %s.txt", name, layer)
     return result
+
+
+def discover_variants() -> list[str]:
+    """Find all variant directories + always include 'baseline'."""
+    variants = ["baseline"]
+    if PROMPTS_DIR.exists():
+        for d in sorted(PROMPTS_DIR.iterdir()):
+            if d.is_dir() and d.name != "baseline":
+                variants.append(d.name)
+    return variants
+
+
+def format_episodes_text(episodes: list[dict]) -> str:
+    return "\n\n".join(
+        f"Episode #{i+1}:\n{json.dumps(ep, ensure_ascii=False)}"
+        for i, ep in enumerate(episodes)
+    )
+
+
+def format_playbooks_text(entries: list[dict]) -> str:
+    if not entries:
+        return "(none yet)"
+    return "\n".join(
+        f"- **{e.get('name', '?')}**: {e.get('context', '')} → {e.get('action', '')}"
+        for e in entries
+    )
 
 
 def save(name: str, data: dict):
     path = RESULTS_DIR / f"{name}.json"
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
-    logger.info("Saved → %s", path)
+    logger.info("  saved → %s", path)
+
+
+def run_chain(llm, context: str, prompts: dict[str, str], name: str):
+    """Run full L1→L2→L3 chain with given prompts."""
+    logger.info("=== Chain: %s ===", name)
+
+    # L1: Episode extraction
+    logger.info("  L1: extracting episodes...")
+    prompt_text = prompts["episode"].replace("{context}", context)
+    resp1 = llm.complete(prompt_text, MODEL_FAST)
+    episodes = parse_llm_json(resp1.text)
+    save(f"{name}_L1_episodes", {
+        "episodes": episodes, "count": len(episodes),
+        "output_tokens": resp1.output_tokens,
+    })
+    logger.info("  L1: %d episodes, %d tokens", len(episodes), resp1.output_tokens)
+
+    if not episodes:
+        logger.warning("  No episodes, skipping L2/L3")
+        return
+
+    episodes_text = format_episodes_text(episodes)
+
+    # L2: Playbook distillation
+    logger.info("  L2: distilling playbook...")
+    prompt_text = (prompts["playbook"]
+                   .replace("{episodes}", episodes_text)
+                   .replace("{playbooks}", "(none yet — first extraction)"))
+    resp2 = llm.complete(prompt_text, MODEL_FAST)
+    playbook = parse_llm_json(resp2.text)
+    save(f"{name}_L2_playbook", {
+        "entries": playbook, "count": len(playbook),
+        "output_tokens": resp2.output_tokens,
+    })
+    logger.info("  L2: %d entries, %d tokens", len(playbook), resp2.output_tokens)
+
+    # L3: Routine composition
+    logger.info("  L3: composing routines...")
+    prompt_text = (prompts["routine"]
+                   .replace("{episodes}", episodes_text)
+                   .replace("{playbooks}", format_playbooks_text(playbook))
+                   .replace("{routines}", "(none yet)"))
+    resp3 = llm.complete(prompt_text, MODEL_FAST)
+    routines = parse_llm_json(resp3.text)
+    save(f"{name}_L3_routines", {
+        "routines": routines, "count": len(routines),
+        "output_tokens": resp3.output_tokens,
+    })
+    logger.info("  L3: %d routines, %d tokens", len(routines), resp3.output_tokens)
+
+    total = resp1.output_tokens + resp2.output_tokens + resp3.output_tokens
+    save(f"{name}_summary", {
+        "episodes": len(episodes),
+        "playbook_entries": len(playbook),
+        "routines": len(routines),
+        "total_output_tokens": total,
+    })
+    logger.info("  TOTAL: %d episodes → %d entries → %d routines (%d tokens)",
+                len(episodes), len(playbook), len(routines), total)
 
 
 def main():
     fixture_path = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_FIXTURE
     if not fixture_path.exists():
         logger.error("Fixture not found: %s", fixture_path)
-        logger.error("Run: PYTHONPATH=src uv run python tests/experiments/snapshot.py")
         sys.exit(1)
 
     settings = Settings()
@@ -69,35 +163,25 @@ def main():
         openai_base_url=settings.openai_base_url,
     )
 
-    fixture = load_fixture(fixture_path)
+    fixture = json.loads(fixture_path.read_text())
     context = build_context_from_dicts(
-        fixture["frames"],
-        fixture.get("audio", []),
-        fixture.get("os_events", []),
+        fixture["frames"], fixture.get("audio", []), fixture.get("os_events", []),
     )
+    logger.info("Fixture: %d frames, context: %d chars", len(fixture["frames"]), len(context))
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     save("context", {"chars": len(context), "fixture": str(fixture_path)})
 
-    prompts = load_prompts()
-    logger.info("Prompt variants: %s", list(prompts.keys()))
+    production = _production_prompts()
+    variants = discover_variants()
+    logger.info("Variants: %s", variants)
 
-    for name, prompt in prompts.items():
-        logger.info("Running [%s]...", name)
+    for name in variants:
+        prompts = load_variant(name, production)
         try:
-            prompt_text = prompt.replace("{context}", context)
-            resp = llm.complete(prompt_text, MODEL_FAST)
-            episodes = parse_llm_json(resp.text)
-            save(name, {
-                "episodes": episodes,
-                "count": len(episodes),
-                "input_tokens": resp.input_tokens,
-                "output_tokens": resp.output_tokens,
-            })
-            logger.info("  [%s] → %d episodes, %d tokens", name, len(episodes), resp.output_tokens)
-        except Exception as e:
-            save(name, {"error": str(e), "episodes": []})
-            logger.exception("  [%s] FAILED", name)
+            run_chain(llm, context, prompts, name)
+        except Exception:
+            logger.exception("Chain [%s] FAILED", name)
 
     logger.info("Done. Results in %s", RESULTS_DIR)
 
