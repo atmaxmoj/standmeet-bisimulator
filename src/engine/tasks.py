@@ -7,26 +7,18 @@ Queue-native design:
 - DB owns all data + progress tracking (processed column)
 """
 
-import json
 import logging
 import sqlite3
 from pathlib import Path
 
 from huey import SqliteHuey, crontab
 
-from engine.config import Settings, MODEL_FAST, MODEL_DEEP, DAILY_COST_CAP_USD
+from engine.config import Settings, MODEL_DEEP, DAILY_COST_CAP_USD
 from engine.domain.entities.frame import Frame
-from engine.domain.prompts.episode import EPISODE_PROMPT
-from engine.domain.prompts.playbook import PLAYBOOK_PROMPT
-from engine.domain.prompts.routine import ROUTINE_PROMPT
 from engine.llm import create_client
-from engine.pipeline.stages.collect import load_frames, store_episodes
-from engine.pipeline.stages.extract import build_context, parse_llm_json
-from engine.pipeline.stages.distill import format_episodes, format_playbooks
-from engine.pipeline.stages.compose import format_playbooks_for_routines, format_routines, format_episodes_for_routines
 from engine.pipeline.stages.filter import should_keep, detect_windows
-from engine.pipeline.stages.validate import validate_episodes, validate_playbooks, with_retry
 from engine.pipeline.budget import check_daily_budget
+from engine.pipeline.orchestrator import run_episode, run_distill, run_routines
 
 logger = logging.getLogger(__name__)
 
@@ -203,61 +195,16 @@ def process_episode(
     audio_ids: list[int],
     os_event_ids: list[int] | None = None,
 ):
-    """Read frame data from DB, call Claude Agent SDK, store episodes."""
+    """Read frame data from DB, call LLM, store episodes."""
     if not screen_ids and not audio_ids and not os_event_ids:
         return
-
     conn = _get_conn()
     try:
-        # Budget check
         if not check_daily_budget(conn, DAILY_COST_CAP_USD):
-            logger.warning("process_episode: daily budget exceeded, skipping")
+            logger.warning("process_episode: budget exceeded, skipping")
             return
-
-        frames = load_frames(conn, screen_ids, audio_ids, os_event_ids)
-        if not frames:
-            return
-
-        logger.info(
-            "process_episode: %d frames [%s -> %s]",
-            len(frames), frames[0].timestamp, frames[-1].timestamp,
-        )
-
-        prompt = EPISODE_PROMPT.format(context=build_context(frames))
-
-        # LLM call with validation + retry
-        last_resp = [None]  # mutable container for closure
-
-        def _call_llm(retry_prompt):
-            p = retry_prompt if retry_prompt else prompt
-            resp = _llm.complete(p, MODEL_FAST)
-            last_resp[0] = resp
-            return resp.text
-
-        tasks = with_retry(_call_llm, validate_episodes, max_retries=1)
-        resp = last_resp[0]
-
-        store_episodes(conn, tasks, frames)
-
-        # Record usage + log
-        cost = resp.cost_usd or 0
-        conn.execute(
-            "INSERT INTO token_usage (model, layer, input_tokens, output_tokens, cost_usd) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (MODEL_FAST, "episode", resp.input_tokens, resp.output_tokens, cost),
-        )
-        conn.execute(
-            "INSERT INTO pipeline_logs (stage, prompt, response, model, input_tokens, output_tokens, cost_usd) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            ("episode", prompt, resp.text, MODEL_FAST, resp.input_tokens, resp.output_tokens, cost),
-        )
+        run_episode(_llm, conn, screen_ids, audio_ids, os_event_ids)
         conn.commit()
-
-        logger.info(
-            "process_episode: created %d episodes, cost=$%.4f",
-            len(tasks), cost,
-        )
-
     except Exception:
         logger.exception("process_episode failed")
     finally:
@@ -272,90 +219,11 @@ def daily_distill_task():
     """Daily playbook distillation with Opus. Runs every day at 3am."""
     conn = _get_conn()
     try:
-        # Budget check
         if not check_daily_budget(conn, DAILY_COST_CAP_USD):
-            logger.warning("daily distill: daily budget exceeded, skipping")
+            logger.warning("daily distill: budget exceeded, skipping")
             return
-
-        episodes = conn.execute(
-            "SELECT * FROM episodes WHERE created_at >= datetime('now', '-1 days') "
-            "ORDER BY created_at",
-        ).fetchall()
-
-        if not episodes:
-            logger.info("daily distill: no episodes, skipping")
-            return
-
-        existing = conn.execute(
-            "SELECT * FROM playbook_entries ORDER BY confidence DESC",
-        ).fetchall()
-
-        episodes_list = [dict(e) for e in episodes]
-        existing_list = [dict(e) for e in existing]
-
-        prompt = PLAYBOOK_PROMPT.format(
-            playbooks=format_playbooks(existing_list),
-            episodes=format_episodes(episodes_list),
-        )
-
-        # LLM call with validation + retry
-        last_resp = [None]
-
-        def _call_llm(retry_prompt):
-            p = retry_prompt if retry_prompt else prompt
-            resp = _llm.complete(p, MODEL_DEEP)
-            last_resp[0] = resp
-            return resp.text
-
-        entries = with_retry(_call_llm, validate_playbooks, max_retries=1)
-        resp = last_resp[0]
-
-        cost = resp.cost_usd or 0
-        conn.execute(
-            "INSERT INTO token_usage (model, layer, input_tokens, output_tokens, cost_usd) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (MODEL_DEEP, "distill", resp.input_tokens, resp.output_tokens, cost),
-        )
-        conn.execute(
-            "INSERT INTO pipeline_logs (stage, prompt, response, model, input_tokens, output_tokens, cost_usd) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            ("distill", prompt, resp.text, MODEL_DEEP, resp.input_tokens, resp.output_tokens, cost),
-        )
-
-        count = 0
-        for entry in entries:
-            rich_action = json.dumps({
-                "intuition": entry.get("intuition", ""),
-                "action": entry.get("action", ""),
-                "why": entry.get("why", ""),
-                "counterexample": entry.get("counterexample"),
-            }, ensure_ascii=False)
-
-            conn.execute(
-                "INSERT INTO playbook_entries (name, context, action, confidence, "
-                "maturity, evidence, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, datetime('now')) "
-                "ON CONFLICT(name) DO UPDATE SET "
-                "context=excluded.context, action=excluded.action, "
-                "confidence=excluded.confidence, maturity=excluded.maturity, "
-                "evidence=excluded.evidence, updated_at=datetime('now')",
-                (
-                    entry["name"],
-                    entry.get("context", ""),
-                    rich_action,
-                    entry.get("confidence", 0.5),
-                    entry.get("maturity", "nascent"),
-                    json.dumps(entry.get("evidence", [])),
-                ),
-            )
-            count += 1
-
+        run_distill(_llm, conn)
         conn.commit()
-        logger.info(
-            "daily distill: %d entries from %d episodes, cost=$%.4f",
-            count, len(episodes), cost,
-        )
-
     except Exception:
         logger.exception("daily distill failed")
     finally:
@@ -367,82 +235,14 @@ def daily_distill_task():
 
 @huey.periodic_task(crontab(hour="3", minute="30"))
 def daily_routines_task():
-    """Daily routine extraction with Opus. Runs at 3:30am (after distill at 3am)."""
+    """Daily routine extraction with Opus. Runs at 3:30am."""
     conn = _get_conn()
     try:
         if not check_daily_budget(conn, DAILY_COST_CAP_USD):
-            logger.warning("daily routines: daily budget exceeded, skipping")
+            logger.warning("daily routines: budget exceeded, skipping")
             return
-
-        episodes = conn.execute(
-            "SELECT * FROM episodes WHERE created_at >= datetime('now', '-1 days') "
-            "ORDER BY created_at",
-        ).fetchall()
-
-        if not episodes:
-            logger.info("daily routines: no episodes, skipping")
-            return
-
-        playbooks = conn.execute(
-            "SELECT * FROM playbook_entries ORDER BY confidence DESC",
-        ).fetchall()
-
-        existing_routines = conn.execute(
-            "SELECT * FROM routines ORDER BY confidence DESC",
-        ).fetchall()
-
-        episodes_list = [dict(e) for e in episodes]
-        playbooks_list = [dict(p) for p in playbooks]
-        routines_list = [dict(r) for r in existing_routines]
-
-        prompt = ROUTINE_PROMPT.format(
-            playbooks=format_playbooks_for_routines(playbooks_list),
-            routines=format_routines(routines_list),
-            episodes=format_episodes_for_routines(episodes_list),
-        )
-
-        resp = _llm.complete(prompt, MODEL_DEEP)
-        cost = resp.cost_usd or 0
-
-        conn.execute(
-            "INSERT INTO token_usage (model, layer, input_tokens, output_tokens, cost_usd) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (MODEL_DEEP, "routines", resp.input_tokens, resp.output_tokens, cost),
-        )
-        conn.execute(
-            "INSERT INTO pipeline_logs (stage, prompt, response, model, input_tokens, output_tokens, cost_usd) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            ("routines", prompt, resp.text, MODEL_DEEP, resp.input_tokens, resp.output_tokens, cost),
-        )
-        entries = parse_llm_json(resp.text)
-
-        count = 0
-        for entry in entries:
-            conn.execute(
-                "INSERT INTO routines (name, trigger, goal, steps, uses, confidence, maturity, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now')) "
-                "ON CONFLICT(name) DO UPDATE SET "
-                "trigger=excluded.trigger, goal=excluded.goal, steps=excluded.steps, "
-                "uses=excluded.uses, confidence=excluded.confidence, maturity=excluded.maturity, "
-                "updated_at=datetime('now')",
-                (
-                    entry["name"],
-                    entry.get("trigger", ""),
-                    entry.get("goal", ""),
-                    json.dumps(entry.get("steps", []), ensure_ascii=False),
-                    json.dumps(entry.get("uses", []), ensure_ascii=False),
-                    entry.get("confidence", 0.4),
-                    entry.get("maturity", "nascent"),
-                ),
-            )
-            count += 1
-
+        run_routines(_llm, conn)
         conn.commit()
-        logger.info(
-            "daily routines: %d routines from %d episodes, cost=$%.4f",
-            count, len(episodes), cost,
-        )
-
     except Exception:
         logger.exception("daily routines failed")
     finally:
