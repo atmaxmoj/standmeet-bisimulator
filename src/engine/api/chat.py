@@ -41,13 +41,16 @@ TOOL_LABELS = {
     "get_audio": "Getting audio",
     "get_os_events": "Getting OS events",
     "get_usage": "Getting usage stats",
+    "web_search": "Searching the web",
     "propose_delete": "Proposing deletion",
     "propose_update_playbook": "Proposing playbook update",
 }
 
 SYSTEM_PROMPT = """You are the memory assistant for an observation system that captures screen frames, audio transcriptions, OS events, and distills them into episodes and behavioral playbook entries.
 
-You can freely read any data using your tools. When the user asks you to modify data (delete, update, create), you MUST use the proposal tools instead of directly modifying. These proposals will be shown to the user for approval before execution.
+You can freely read any data using your tools. You can also search the web for context when needed (e.g., to understand tools, techniques, or industry practices mentioned in the data).
+
+When the user asks you to modify data (delete, update, create), you MUST use the proposal tools instead of directly modifying. These proposals will be shown to the user for approval before execution.
 
 Be concise and helpful. When presenting data, summarize key points rather than dumping raw JSON."""
 
@@ -148,6 +151,19 @@ def _make_read_tools(db) -> list[dict]:
                 "required": [],
             },
         },
+        # -- Web search --
+        {
+            "name": "web_search",
+            "description": "Search the web for information. Use this to look up tools, techniques, best practices, or context mentioned in the observation data.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query"},
+                    "max_results": {"type": "integer", "default": 5},
+                },
+                "required": ["query"],
+            },
+        },
         # -- Mutation proposals (don't execute, return proposal for user approval) --
         {
             "name": "propose_delete",
@@ -181,8 +197,23 @@ def _make_read_tools(db) -> list[dict]:
     ]
 
 
+def _web_search(query: str, max_results: int = 5) -> list[dict]:
+    """Search the web via DuckDuckGo. Returns list of {title, href, body}."""
+    try:
+        from duckduckgo_search import DDGS
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=max_results))
+            return [{"title": r["title"], "url": r["href"], "snippet": r["body"]} for r in results]
+    except Exception as e:
+        logger.warning("web_search failed: %s", e)
+        return [{"error": str(e)}]
+
+
 async def _read_tool(db, name: str, args: dict) -> Any:
     """Execute a read-only tool. Returns result or None if not a read tool."""
+    if name == "web_search":
+        return _web_search(args["query"], args.get("max_results", 5))
+
     handlers = {
         "search_episodes": lambda: db.search_episodes_by_keyword(args["query"], args.get("limit", 10)),
         "get_recent_episodes": lambda: db.get_recent_episodes(args.get("days", 7)),

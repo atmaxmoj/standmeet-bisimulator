@@ -226,7 +226,7 @@ class TestToolDefinitions:
         expected = {
             "search_episodes", "get_recent_episodes", "get_playbooks",
             "get_playbook_history", "get_frames", "get_audio", "get_os_events",
-            "get_usage", "propose_delete", "propose_update_playbook",
+            "get_usage", "web_search", "propose_delete", "propose_update_playbook",
         }
         assert tool_names == expected
 
