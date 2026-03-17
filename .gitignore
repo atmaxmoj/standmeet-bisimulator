@@ -5,3 +5,5 @@ __pycache__/
 .venv/
 capture/.venv/
 node_modules/
+tests/experiments/fixtures/
+tests/experiments/results/

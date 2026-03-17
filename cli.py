@@ -457,27 +457,40 @@ def cmd_watchdog_off():
 
 def cmd_experiment():
     """Run prompt experiment inside Docker container.
-    Usage: npm run experiment [-- <frame_limit>]
-    Default: 50 frames. Results saved to tests/experiments/results/
+
+    Usage: npm run experiment
+    Prerequisites: npm run experiment:snapshot (to create fixture)
+    Results saved to tests/experiments/results/
     """
-    frame_limit = sys.argv[2] if len(sys.argv) > 2 else "50"
-    results_dir = ROOT / "tests" / "experiments" / "results"
+    experiments_dir = ROOT / "tests" / "experiments"
+    results_dir = experiments_dir / "results"
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    print(f"==> Running experiment ({frame_limit} frames)...")
+    fixture = experiments_dir / "fixtures" / "frames.json"
+    if not fixture.exists():
+        print("==> No fixture found. Creating snapshot first...")
+        run([sys.executable, str(experiments_dir / "snapshot.py")], cwd=ROOT)
+
+    # Copy fixtures + prompts into container
+    print("==> Copying fixtures + prompts into container...")
+    run(["docker", "compose", "exec", "-T", "engine",
+         "mkdir", "-p", "/app/tests/experiments"], cwd=ROOT)
+    run(["docker", "compose", "cp",
+         str(experiments_dir / "fixtures") + "/.", "engine:/app/tests/experiments/fixtures"], cwd=ROOT)
+    run(["docker", "compose", "cp",
+         str(experiments_dir / "prompts") + "/.", "engine:/app/tests/experiments/prompts"], cwd=ROOT)
+
+    # Run experiment
+    print("==> Running experiment...")
     run([
         "docker", "compose", "exec", "-T", "-u", "engine", "engine",
-        "uv", "run", "python", "-u", "-m", "engine.experiments.try_prompt", frame_limit,
+        "uv", "run", "python", "-u", "-m", "engine.experiments.runner",
     ], cwd=ROOT)
 
-    # Copy results from container to host
-    run([
-        "docker", "compose", "cp",
-        "engine:/data/experiment_results/.",
-        str(results_dir),
-    ], cwd=ROOT)
+    # Copy results out
+    run(["docker", "compose", "cp",
+         "engine:/data/experiment_results/.", str(results_dir)], cwd=ROOT)
 
-    # Show what we got
     for f in sorted(results_dir.glob("*.json")):
         print(f"  {f.name}")
     print(f"==> Results in {results_dir}/")
