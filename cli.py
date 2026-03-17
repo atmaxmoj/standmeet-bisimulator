@@ -497,6 +497,40 @@ def cmd_experiment():
     print(f"==> Results in {results_dir}/")
 
 
+def cmd_test_integration():
+    """Run integration tests inside Docker (real LLM, real search).
+
+    Usage: npm run test:integration
+    """
+    integration_dir = ROOT / "tests" / "integration"
+    if not integration_dir.exists():
+        print("==> No integration tests found")
+        return
+
+    # Copy test files into container
+    run(["docker", "compose", "exec", "-T", "engine",
+         "mkdir", "-p", "/app/tests/integration"], cwd=ROOT)
+    run(["docker", "compose", "cp",
+         str(integration_dir) + "/.", "engine:/app/tests/integration"], cwd=ROOT)
+
+    # Run each test file
+    test_files = sorted(integration_dir.glob("test_*.py"))
+    failed = []
+    for tf in test_files:
+        print(f"==> Running {tf.name}...")
+        r = run([
+            "docker", "compose", "exec", "-T", "-u", "engine", "engine",
+            "uv", "run", "python", "-u", f"/app/tests/integration/{tf.name}",
+        ], cwd=ROOT)
+        if r.returncode != 0:
+            failed.append(tf.name)
+
+    if failed:
+        print(f"\n==> FAILED: {', '.join(failed)}")
+        sys.exit(1)
+    print(f"\n==> All {len(test_files)} integration tests passed")
+
+
 COMMANDS = {
     "setup": cmd_setup,
     "start": cmd_start,
@@ -510,6 +544,7 @@ COMMANDS = {
     "watchdog": cmd_watchdog,
     "watchdog-off": cmd_watchdog_off,
     "experiment": cmd_experiment,
+    "test-integration": cmd_test_integration,
 }
 
 

@@ -234,14 +234,24 @@ async def _web_search(query: str, max_results: int = 5) -> list[dict]:
             if isinstance(msg, ResultMessage):
                 result_text = msg.result or ""
 
-        # Parse results
+        if not result_text.strip():
+            return [{"error": "Empty response from search"}]
+
+        # Parse results — handle markdown fences, extra text, etc.
         text = result_text.strip()
         if text.startswith("```"):
-            text = text.split("\n", 1)[1].rsplit("```", 1)[0]
-        results = json.loads(text)
-        if isinstance(results, list):
-            return results[:max_results]
-        return [{"error": "Unexpected response format", "raw": result_text[:200]}]
+            text = text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+
+        # Try to find JSON array in the response
+        import re
+        match = re.search(r"\[.*\]", text, re.DOTALL)
+        if match:
+            results = json.loads(match.group())
+            if isinstance(results, list):
+                return results[:max_results]
+
+        # If no JSON array found, return the raw text as a single result
+        return [{"title": "Search result", "url": "", "snippet": text[:500]}]
     except Exception as e:
         logger.warning("web_search failed: %s", e)
         return [{"error": str(e)}]

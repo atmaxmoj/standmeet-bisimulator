@@ -18,6 +18,7 @@
     "watchdog-off": "uv run python cli.py watchdog-off",
     "lint": "uv run ruff check src/ capture/src/ audio/src/ cli.py",
     "experiment": "uv run python cli.py experiment",
+    "test:integration": "uv run python cli.py test-integration",
     "lint:fix": "uv run ruff check src/ capture/src/ audio/src/ cli.py --fix",
     "prepare": "husky"
   },

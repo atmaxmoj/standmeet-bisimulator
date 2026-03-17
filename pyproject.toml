@@ -31,6 +31,7 @@ packages = ["src/engine"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+addopts = "--ignore=tests/integration"
 
 [tool.importlinter]
 root_packages = ["engine"]
