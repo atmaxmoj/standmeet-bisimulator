@@ -589,7 +589,7 @@ dev = [
 requires-dist = [
     { name = "aiosqlite", specifier = ">=0.21" },
     { name = "anthropic", specifier = ">=0.52" },
-    { name = "claude-agent-sdk", specifier = ">=0.1.48" },
+    { name = "claude-agent-sdk", specifier = "==0.1.48" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "huey", specifier = ">=2.5" },
     { name = "openai", specifier = ">=1.0" },
