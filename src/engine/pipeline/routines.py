@@ -8,9 +8,9 @@ import json
 import logging
 
 from engine.config import MODEL_DEEP
-from engine.db import DB
+from engine.infra.db import DB
 from engine.domain.prompts.routine import ROUTINE_PROMPT  # noqa: F401
-from engine.llm import LLMClient
+from engine.infra.llm import LLMClient
 from engine.infra.memory_file import write_routine
 from engine.pipeline.stages.compose import compose_routines
 

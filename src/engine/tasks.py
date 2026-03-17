@@ -15,7 +15,7 @@ from huey import SqliteHuey, crontab
 
 from engine.config import Settings, MODEL_DEEP, DAILY_COST_CAP_USD
 from engine.domain.entities.frame import Frame
-from engine.llm import create_client
+from engine.infra.llm import create_client
 from engine.pipeline.stages.filter import should_keep, detect_windows
 from engine.pipeline.budget import check_daily_budget
 from engine.pipeline.orchestrator import run_episode, run_distill, run_routines

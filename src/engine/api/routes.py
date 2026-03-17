@@ -362,8 +362,8 @@ async def backfill(request: Request):
     """
     import sqlite3
     from engine.config import Settings
-    from engine.pipeline.collector import Frame
-    from engine.pipeline.filter import should_keep, detect_windows
+    from engine.domain.entities.frame import Frame
+    from engine.pipeline.stages.filter import should_keep, detect_windows
     from engine.tasks import process_episode
 
     settings = Settings()

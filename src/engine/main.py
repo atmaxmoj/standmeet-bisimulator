@@ -11,8 +11,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from engine.config import Settings
-from engine.db import DB
-from engine.llm import create_client
+from engine.infra.db import DB
+from engine.infra.llm import create_client
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "DEBUG").upper()
 

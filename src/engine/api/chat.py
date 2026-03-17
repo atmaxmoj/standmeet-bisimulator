@@ -13,8 +13,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from engine.config import MODEL_FAST
-from engine.pipeline.log_mutation import log_mutation
-from engine.pipeline.memory_file import write_playbook, delete_playbook
+from engine.infra.log_mutation import log_mutation
+from engine.infra.memory_file import write_playbook, delete_playbook
 
 logger = logging.getLogger(__name__)
 

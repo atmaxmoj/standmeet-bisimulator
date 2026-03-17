@@ -7,7 +7,7 @@ The agent decides what to investigate based on the data it sees.
 
 import sqlite3
 
-from engine.llm import ToolDef
+from engine.infra.llm import ToolDef
 
 
 def get_playbook_history(conn: sqlite3.Connection, name: str) -> list[dict]:

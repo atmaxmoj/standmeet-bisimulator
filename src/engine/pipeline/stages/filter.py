@@ -3,7 +3,7 @@
 import logging
 from datetime import datetime, timezone
 
-from engine.pipeline.collector import Frame
+from engine.domain.entities.frame import Frame
 
 logger = logging.getLogger(__name__)
 

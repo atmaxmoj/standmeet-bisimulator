@@ -7,7 +7,7 @@ import logging
 
 from engine.config import MODEL_DEEP
 from engine.domain.prompts.routine import ROUTINE_PROMPT
-from engine.llm import LLMClient, LLMResponse
+from engine.infra.llm import LLMClient, LLMResponse
 from engine.pipeline.stages.extract import parse_llm_json
 
 logger = logging.getLogger(__name__)

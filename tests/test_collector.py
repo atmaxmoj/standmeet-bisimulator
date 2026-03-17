@@ -1,6 +1,6 @@
 """Tests for Frame dataclass."""
 
-from engine.pipeline.collector import Frame
+from engine.domain.entities.frame import Frame
 
 
 class TestFrame:

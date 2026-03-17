@@ -2,8 +2,8 @@
 
 from datetime import datetime, timezone, timedelta
 
-from engine.pipeline.collector import Frame
-from engine.pipeline.filter import should_keep, detect_windows
+from engine.domain.entities.frame import Frame
+from engine.pipeline.stages.filter import should_keep, detect_windows
 
 
 def _frame(

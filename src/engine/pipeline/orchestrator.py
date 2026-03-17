@@ -12,7 +12,7 @@ from engine.config import MODEL_FAST, MODEL_DEEP
 from engine.domain.prompts.episode import EPISODE_PROMPT
 from engine.domain.prompts.playbook import PLAYBOOK_PROMPT
 from engine.domain.prompts.routine import ROUTINE_PROMPT
-from engine.llm import LLMClient
+from engine.infra.llm import LLMClient
 from engine.pipeline.stages.collect import load_frames, store_episodes
 from engine.pipeline.stages.extract import build_context, parse_llm_json
 from engine.pipeline.stages.distill import format_episodes, format_playbooks

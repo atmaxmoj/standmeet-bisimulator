@@ -9,7 +9,7 @@ import json
 import logging
 import sqlite3
 
-from engine.llm import ToolDef
+from engine.infra.llm import ToolDef
 
 logger = logging.getLogger(__name__)
 

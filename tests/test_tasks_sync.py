@@ -9,12 +9,12 @@ import sqlite3
 
 import pytest
 
-from engine.llm import LLMResponse
-from engine.pipeline.collector import Frame
+from engine.infra.llm import LLMResponse
+from engine.domain.entities.frame import Frame
 from engine.pipeline.episode import EPISODE_PROMPT, build_context
 from engine.pipeline.distill import DISTILL_PROMPT
 from engine.pipeline.routines import ROUTINE_PROMPT
-from engine.pipeline.validate import validate_episodes, validate_playbooks, with_retry
+from engine.pipeline.stages.validate import validate_episodes, validate_playbooks, with_retry
 
 # Same canned responses as test_pipeline_e2e.py
 EPISODE_LLM_RESPONSE = json.dumps([

@@ -43,8 +43,8 @@ layers = [
     "engine.api",
     "engine.tasks",
     "engine.pipeline",
-    "engine.llm",
-    "engine.db",
+    "engine.infra",
+    "engine.domain",
     "engine.config",
 ]
 

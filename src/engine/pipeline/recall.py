@@ -6,7 +6,7 @@ and raw capture data. The agent decides what to look up based on context.
 
 import sqlite3
 
-from engine.llm import ToolDef
+from engine.infra.llm import ToolDef
 
 
 def search_episodes(conn: sqlite3.Connection, query: str, limit: int = 10) -> list[dict]:
