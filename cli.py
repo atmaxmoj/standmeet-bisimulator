@@ -550,12 +550,19 @@ def cmd_test_integration():
             if r.returncode != 0:
                 failed.append(tf.name)
 
+    # Copy test results from container
+    run(["docker", "compose", "cp",
+         "engine:/data/test_results/.", str(results_dir / "integration")],
+        cwd=ROOT)
+
     if failed:
         print(f"\n==> FAILED: {', '.join(failed)}")
-        print(f"  See {integration_log}")
+        print(f"  Log: {integration_log}")
+        print(f"  Results: {results_dir / 'integration'}/")
         sys.exit(1)
     print(f"\n==> All {len(test_files)} integration tests passed")
     print(f"  Log: {integration_log}")
+    print(f"  Results: {results_dir / 'integration'}/")
 
 
 COMMANDS = {

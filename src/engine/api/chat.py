@@ -197,7 +197,7 @@ def _make_read_tools(db) -> list[dict]:
     ]
 
 
-async def _web_search(query: str, max_results: int = 5) -> list[dict]:
+async def _web_search(search_query: str, max_results: int = 5) -> list[dict]:
     """Search the web using Claude Code's built-in WebSearch.
 
     No separate search API key needed — uses the same OAuth token as the LLM.
@@ -205,7 +205,7 @@ async def _web_search(query: str, max_results: int = 5) -> list[dict]:
     """
     try:
         import os
-        from claude_agent_sdk import query, ClaudeAgentOptions, ResultMessage
+        from claude_agent_sdk import query as sdk_query, ClaudeAgentOptions, ResultMessage
 
         env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
         token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
@@ -215,13 +215,15 @@ async def _web_search(query: str, max_results: int = 5) -> list[dict]:
             env.pop("ANTHROPIC_API_KEY", None)
 
         prompt = (
-            f"Search the web for: {query}\n\n"
+            f"Search the web for: {search_query}\n\n"
             f"Return the top {max_results} results as a JSON array with fields: title, url, snippet.\n"
             f"Output ONLY the JSON array."
         )
 
         result_text = ""
-        async for msg in query(
+        search_log: list[dict] = []  # trace the full message flow
+
+        async for msg in sdk_query(
             prompt=prompt,
             options=ClaudeAgentOptions(
                 model="claude-haiku-4-5-20251001",
@@ -231,11 +233,17 @@ async def _web_search(query: str, max_results: int = 5) -> list[dict]:
                 # No tools=[] — let Claude Code use its built-in WebSearch
             ),
         ):
+            msg_type = type(msg).__name__
+            search_log.append({"type": msg_type, "data": str(msg)[:500]})
+
             if isinstance(msg, ResultMessage):
                 result_text = msg.result or ""
 
+        logger.info("web_search trace: %d messages, types=%s",
+                    len(search_log), [m["type"] for m in search_log])
+
         if not result_text.strip():
-            return [{"error": "Empty response from search"}]
+            return [{"error": "Empty response from search", "_trace": search_log}]
 
         # Parse results — handle markdown fences, extra text, etc.
         text = result_text.strip()
