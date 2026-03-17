@@ -109,8 +109,13 @@ def on_new_data():
             [f for f in all_raw if should_keep(f)],
             key=lambda f: f.timestamp,
         )
+        filtered_count = len(all_raw) - len(kept)
 
         if not kept:
+            logger.info(
+                "on_new_data: all %d frames filtered as noise (%d screen, %d audio, %d os), marking processed",
+                len(all_raw), len(screen_frames), len(audio_frames), len(os_frames),
+            )
             _mark_processed(conn, all_screen_ids, all_audio_ids, all_os_ids)
             return
 
@@ -122,9 +127,11 @@ def on_new_data():
         )
 
         if not windows:
-            logger.debug(
-                "on_new_data: %d pending frames, no complete windows yet",
-                len(all_raw),
+            time_range = f"{kept[0].timestamp} → {kept[-1].timestamp}" if kept else "?"
+            logger.info(
+                "on_new_data: %d frames (%d kept, %d noise), no complete windows. "
+                "Time range: %s, remainder: %d",
+                len(all_raw), len(kept), filtered_count, time_range, len(remainder),
             )
             return
 
@@ -203,10 +210,12 @@ def process_episode(
         if not check_daily_budget(conn, DAILY_COST_CAP_USD):
             logger.warning("process_episode: budget exceeded, skipping")
             return
-        run_episode(_llm, conn, screen_ids, audio_ids, os_event_ids)
+        tasks, count = run_episode(_llm, conn, screen_ids, audio_ids, os_event_ids)
         conn.commit()
+        logger.info("process_episode: %d episodes created", count)
     except Exception:
-        logger.exception("process_episode failed")
+        logger.exception("process_episode FAILED (screen=%d, audio=%d, os=%d)",
+                         len(screen_ids), len(audio_ids), len(os_event_ids or []))
     finally:
         conn.close()
 
@@ -222,10 +231,11 @@ def daily_distill_task():
         if not check_daily_budget(conn, DAILY_COST_CAP_USD):
             logger.warning("daily distill: budget exceeded, skipping")
             return
-        run_distill(_llm, conn)
+        count = run_distill(_llm, conn)
         conn.commit()
+        logger.info("daily distill: %d entries updated", count)
     except Exception:
-        logger.exception("daily distill failed")
+        logger.exception("daily distill FAILED")
     finally:
         conn.close()
 
@@ -241,10 +251,11 @@ def daily_routines_task():
         if not check_daily_budget(conn, DAILY_COST_CAP_USD):
             logger.warning("daily routines: budget exceeded, skipping")
             return
-        run_routines(_llm, conn)
+        count = run_routines(_llm, conn)
         conn.commit()
+        logger.info("daily routines: %d routines updated", count)
     except Exception:
-        logger.exception("daily routines failed")
+        logger.exception("daily routines FAILED")
     finally:
         conn.close()
 
