@@ -436,6 +436,47 @@ class TestChatEndpoint:
         assert text_event["content"] == "Summary of your activity."
         assert text_event["input_tokens"] == 250  # 50+80+120
 
+    @pytest.mark.asyncio
+    async def test_web_search_tool_call(self, seeded_db):
+        """LLM calls web_search → gets results → returns text."""
+        from unittest.mock import AsyncMock, patch
+
+        mock_results = [
+            {"title": "Python Tutorial", "url": "https://example.com", "snippet": "Learn Python"},
+        ]
+
+        llm = MockLLMClient([
+            # Turn 1: LLM calls web_search
+            MessageResponse(
+                content=[ContentBlock(
+                    type="tool_use", tool_name="web_search",
+                    tool_input={"query": "python asyncio"}, tool_use_id="ws1",
+                )],
+                stop_reason="tool_use", input_tokens=50, output_tokens=20,
+            ),
+            # Turn 2: LLM responds with text using search results
+            MessageResponse(
+                content=[ContentBlock(type="text", text="Here's what I found about asyncio.")],
+                stop_reason="end_turn", input_tokens=100, output_tokens=30,
+            ),
+        ])
+        app = _make_app(seeded_db, llm)
+
+        with patch("engine.api.chat._web_search", new_callable=AsyncMock, return_value=mock_results):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                resp = await client.post("/api/memory/chat", json={"messages": [
+                    {"role": "user", "content": "Search for python asyncio"},
+                ]})
+
+        events = _parse_sse(resp.text)
+        tool_events = [e for e in events if e[0] == "tool_call"]
+        assert len(tool_events) == 1
+        assert tool_events[0][1]["name"] == "web_search"
+        assert tool_events[0][1]["label"] == "Searching the web"
+
+        text_event = [e for e in events if e[0] == "text"][0][1]
+        assert "asyncio" in text_event["content"]
+
 
 class TestChatPersistence:
     @pytest.mark.asyncio
