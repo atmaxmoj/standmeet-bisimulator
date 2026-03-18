@@ -54,12 +54,11 @@ async def seeded_db(db):
         data="git status",
     )
     # Insert an episode
-    await db._conn.execute(
-        "INSERT INTO episodes (summary, app_names, frame_count, started_at, ended_at, frame_id_min, frame_id_max, frame_source) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        ('{"summary": "Coding in VSCode"}', "VSCode", 5, "2026-03-16T10:00:00", "2026-03-16T10:30:00", 1, 5, "screen"),
+    await db.insert_episode(
+        summary='{"summary": "Coding in VSCode"}', app_names="VSCode",
+        frame_count=5, started_at="2026-03-16T10:00:00", ended_at="2026-03-16T10:30:00",
+        frame_id_min=1, frame_id_max=5, frame_source="screen",
     )
-    await db._conn.commit()
     # Insert a playbook entry
     await db.upsert_playbook(
         name="use-git-frequently",

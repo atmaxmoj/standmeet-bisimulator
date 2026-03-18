@@ -25,10 +25,13 @@ def save_result(name: str, data: dict):
 
 
 def _setup_test_db(tmp_dir: str) -> sqlite3.Connection:
-    from engine.storage.db import SCHEMA
-    conn = sqlite3.connect(f"{tmp_dir}/test.db")
+    from engine.storage.models import Base
+    from sqlalchemy import create_engine
+    db_path = f"{tmp_dir}/test.db"
+    sa_engine = create_engine(f"sqlite:///{db_path}")
+    Base.metadata.create_all(sa_engine)
+    conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
-    conn.executescript(SCHEMA)
 
     # Insert episodes that show a recurring multi-step workflow
     for i in range(3):

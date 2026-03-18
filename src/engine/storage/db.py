@@ -1,142 +1,19 @@
+"""Async DB repository using SQLAlchemy ORM.
+
+Used by FastAPI endpoints (async callers).
+"""
+
 import logging
 
-import aiosqlite
-from datetime import datetime, timezone
+from sqlalchemy import select, func, delete, update, text
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+
+from engine.storage.models import (
+    Base, Frame, AudioFrame, OsEvent, Episode, PlaybookEntry,
+    TokenUsage, State, PipelineLog, PlaybookHistory, Routine, ChatMessage,
+)
 
 logger = logging.getLogger(__name__)
-
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS frames (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT NOT NULL,
-    app_name TEXT NOT NULL DEFAULT '',
-    window_name TEXT NOT NULL DEFAULT '',
-    text TEXT NOT NULL DEFAULT '',
-    display_id INTEGER NOT NULL DEFAULT 0,
-    image_hash TEXT NOT NULL DEFAULT '',
-    image_path TEXT NOT NULL DEFAULT '',
-    processed INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_frames_id ON frames(id);
-
-CREATE TABLE IF NOT EXISTS audio_frames (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT NOT NULL,
-    duration_seconds REAL NOT NULL DEFAULT 0.0,
-    text TEXT NOT NULL DEFAULT '',
-    language TEXT NOT NULL DEFAULT '',
-    source TEXT NOT NULL DEFAULT 'mic',
-    chunk_path TEXT NOT NULL DEFAULT '',
-    processed INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_audio_frames_id ON audio_frames(id);
-
-CREATE TABLE IF NOT EXISTS os_events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT NOT NULL,
-    event_type TEXT NOT NULL,
-    source TEXT NOT NULL DEFAULT '',
-    data TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_os_events_id ON os_events(id);
-CREATE INDEX IF NOT EXISTS idx_os_events_type ON os_events(event_type);
-
-CREATE TABLE IF NOT EXISTS episodes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    summary TEXT NOT NULL,
-    app_names TEXT NOT NULL DEFAULT '',
-    frame_count INTEGER NOT NULL DEFAULT 0,
-    started_at TEXT NOT NULL,
-    ended_at TEXT NOT NULL,
-    frame_id_min INTEGER NOT NULL DEFAULT 0,
-    frame_id_max INTEGER NOT NULL DEFAULT 0,
-    frame_source TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS playbook_entries (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE,
-    context TEXT NOT NULL DEFAULT '',
-    action TEXT NOT NULL DEFAULT '',
-    confidence REAL NOT NULL DEFAULT 0.0,
-    maturity TEXT NOT NULL DEFAULT 'nascent',
-    evidence TEXT NOT NULL DEFAULT '[]',
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS token_usage (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    model TEXT NOT NULL,
-    layer TEXT NOT NULL,
-    input_tokens INTEGER NOT NULL DEFAULT 0,
-    output_tokens INTEGER NOT NULL DEFAULT 0,
-    cost_usd REAL NOT NULL DEFAULT 0.0,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_token_usage_created_at ON token_usage(created_at);
-
-CREATE TABLE IF NOT EXISTS state (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS pipeline_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    stage TEXT NOT NULL,
-    prompt TEXT NOT NULL DEFAULT '',
-    response TEXT NOT NULL DEFAULT '',
-    model TEXT NOT NULL DEFAULT '',
-    input_tokens INTEGER NOT NULL DEFAULT 0,
-    output_tokens INTEGER NOT NULL DEFAULT 0,
-    cost_usd REAL NOT NULL DEFAULT 0.0,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_pipeline_logs_stage ON pipeline_logs(stage);
-CREATE INDEX IF NOT EXISTS idx_pipeline_logs_created_at ON pipeline_logs(created_at);
-
-CREATE TABLE IF NOT EXISTS playbook_history (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    playbook_name TEXT NOT NULL,
-    confidence REAL NOT NULL DEFAULT 0.0,
-    maturity TEXT NOT NULL DEFAULT 'nascent',
-    evidence TEXT NOT NULL DEFAULT '[]',
-    change_reason TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_playbook_history_name ON playbook_history(playbook_name);
-
-CREATE TABLE IF NOT EXISTS routines (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE,
-    trigger TEXT NOT NULL DEFAULT '',
-    goal TEXT NOT NULL DEFAULT '',
-    steps TEXT NOT NULL DEFAULT '[]',
-    uses TEXT NOT NULL DEFAULT '[]',
-    confidence REAL NOT NULL DEFAULT 0.0,
-    maturity TEXT NOT NULL DEFAULT 'nascent',
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS chat_messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    role TEXT NOT NULL,
-    content TEXT NOT NULL DEFAULT '',
-    proposals TEXT NOT NULL DEFAULT '[]',
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-"""
 
 CHAT_WINDOW_SIZE = 20
 
@@ -144,590 +21,583 @@ CHAT_WINDOW_SIZE = 20
 class DB:
     def __init__(self, path: str):
         self.path = path
-        self._conn: aiosqlite.Connection | None = None
+        self._engine = None
+        self._session_factory = None
 
     async def connect(self):
         logger.debug("connecting to database at %s", self.path)
-        self._conn = await aiosqlite.connect(self.path)
-        self._conn.row_factory = aiosqlite.Row
-        await self._conn.execute("PRAGMA journal_mode=WAL")
-        await self._conn.executescript(SCHEMA)
-        # Migrations for existing databases
-        for sql in [
-            "ALTER TABLE frames ADD COLUMN processed INTEGER NOT NULL DEFAULT 0",
-            "ALTER TABLE audio_frames ADD COLUMN processed INTEGER NOT NULL DEFAULT 0",
-            "ALTER TABLE os_events ADD COLUMN processed INTEGER NOT NULL DEFAULT 0",
-            "ALTER TABLE playbook_entries ADD COLUMN last_evidence_at TEXT",
-            "ALTER TABLE chat_messages ADD COLUMN proposals TEXT NOT NULL DEFAULT '[]'",
-        ]:
-            try:
-                await self._conn.execute(sql)
-            except Exception:
-                pass  # Column already exists
-        # Indexes on processed column (safe to run after migration)
-        for sql in [
-            "CREATE INDEX IF NOT EXISTS idx_frames_processed ON frames(processed)",
-            "CREATE INDEX IF NOT EXISTS idx_audio_frames_processed ON audio_frames(processed)",
-            "CREATE INDEX IF NOT EXISTS idx_os_events_processed ON os_events(processed)",
-        ]:
-            await self._conn.execute(sql)
-        await self._conn.commit()
+        self._engine = create_async_engine(
+            f"sqlite+aiosqlite:///{self.path}",
+            echo=False,
+        )
+        async with self._engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+            await conn.execute(text("PRAGMA journal_mode=WAL"))
+        self._session_factory = async_sessionmaker(
+            bind=self._engine, expire_on_commit=False,
+        )
         logger.info("database connected and schema initialized at %s", self.path)
 
     async def close(self):
-        if self._conn:
+        if self._engine:
             logger.debug("closing database connection")
-            await self._conn.close()
+            await self._engine.dispose()
 
-    # -- ingest (capture/audio daemons push data here) --
+    def _session(self) -> AsyncSession:
+        return self._session_factory()
+
+    # -- ingest --
 
     async def insert_frame(
-        self,
-        timestamp: str,
-        app_name: str,
-        window_name: str,
-        text: str,
-        display_id: int,
-        image_hash: str,
-        image_path: str = "",
+        self, timestamp: str, app_name: str, window_name: str,
+        text: str, display_id: int, image_hash: str, image_path: str = "",
     ) -> int:
-        async with self._conn.execute(
-            "INSERT INTO frames (timestamp, app_name, window_name, text, display_id, image_hash, image_path) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (timestamp, app_name, window_name, text, display_id, image_hash, image_path),
-        ) as cur:
-            await self._conn.commit()
-            logger.debug(
-                "inserted frame id=%d display=%d app=%s",
-                cur.lastrowid, display_id, app_name,
+        async with self._session() as s:
+            frame = Frame(
+                timestamp=timestamp, app_name=app_name, window_name=window_name,
+                text=text, display_id=display_id, image_hash=image_hash, image_path=image_path,
             )
-            return cur.lastrowid
+            s.add(frame)
+            await s.commit()
+            await s.refresh(frame)
+            logger.debug("inserted frame id=%d display=%d app=%s", frame.id, display_id, app_name)
+            return frame.id
 
     async def insert_audio_frame(
-        self,
-        timestamp: str,
-        duration_seconds: float,
-        text: str,
-        language: str,
-        source: str = "mic",
-        chunk_path: str = "",
+        self, timestamp: str, duration_seconds: float, text: str,
+        language: str, source: str = "mic", chunk_path: str = "",
     ) -> int:
-        async with self._conn.execute(
-            "INSERT INTO audio_frames (timestamp, duration_seconds, text, language, source, chunk_path) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (timestamp, duration_seconds, text, language, source, chunk_path),
-        ) as cur:
-            await self._conn.commit()
-            logger.debug(
-                "inserted audio_frame id=%d duration=%.1fs lang=%s",
-                cur.lastrowid, duration_seconds, language,
+        async with self._session() as s:
+            af = AudioFrame(
+                timestamp=timestamp, duration_seconds=duration_seconds, text=text,
+                language=language, source=source, chunk_path=chunk_path,
             )
-            return cur.lastrowid
+            s.add(af)
+            await s.commit()
+            await s.refresh(af)
+            logger.debug("inserted audio_frame id=%d duration=%.1fs lang=%s", af.id, duration_seconds, language)
+            return af.id
 
     async def insert_os_event(
-        self,
-        timestamp: str,
-        event_type: str,
-        source: str,
-        data: str,
+        self, timestamp: str, event_type: str, source: str, data: str,
     ) -> int:
-        async with self._conn.execute(
-            "INSERT INTO os_events (timestamp, event_type, source, data) "
-            "VALUES (?, ?, ?, ?)",
-            (timestamp, event_type, source, data),
-        ) as cur:
-            await self._conn.commit()
-            logger.debug(
-                "inserted os_event id=%d type=%s source=%s",
-                cur.lastrowid, event_type, source,
-            )
-            return cur.lastrowid
+        async with self._session() as s:
+            ev = OsEvent(timestamp=timestamp, event_type=event_type, source=source, data=data)
+            s.add(ev)
+            await s.commit()
+            await s.refresh(ev)
+            logger.debug("inserted os_event id=%d type=%s source=%s", ev.id, event_type, source)
+            return ev.id
 
-    # -- query (for API + pipeline) --
+    # -- query --
 
     async def get_frames(self, limit: int = 50, offset: int = 0, search: str = "") -> tuple[list[dict], int]:
-        clauses, params = [], []
-        if search:
-            clauses.append("(app_name LIKE ? OR window_name LIKE ? OR text LIKE ?)")
-            params.extend([f"%{search}%"] * 3)
-        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        async with self._conn.execute(f"SELECT COUNT(*) FROM frames {where}", params) as cur:
-            total = (await cur.fetchone())[0]
-        async with self._conn.execute(
-            f"SELECT id, timestamp, app_name, window_name, "
-            f"substr(text, 1, 500) as text, display_id, image_hash, image_path "
-            f"FROM frames {where} ORDER BY id DESC LIMIT ? OFFSET ?",
-            params + [limit, offset],
-        ) as cur:
-            rows = [dict(r) for r in await cur.fetchall()]
-        return rows, total
+        async with self._session() as s:
+            q = select(Frame)
+            cq = select(func.count()).select_from(Frame)
+            if search:
+                filt = Frame.app_name.contains(search) | Frame.window_name.contains(search) | Frame.text.contains(search)
+                q = q.where(filt)
+                cq = cq.where(filt)
+            total = (await s.execute(cq)).scalar()
+            rows = (await s.execute(
+                q.order_by(Frame.id.desc()).limit(limit).offset(offset)
+            )).scalars().all()
+            return [
+                {"id": r.id, "timestamp": r.timestamp, "app_name": r.app_name,
+                 "window_name": r.window_name, "text": r.text[:500],
+                 "display_id": r.display_id, "image_hash": r.image_hash, "image_path": r.image_path}
+                for r in rows
+            ], total
 
     async def get_audio_frames(self, limit: int = 50, offset: int = 0, search: str = "") -> tuple[list[dict], int]:
-        clauses, params = [], []
-        if search:
-            clauses.append("text LIKE ?")
-            params.append(f"%{search}%")
-        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        async with self._conn.execute(f"SELECT COUNT(*) FROM audio_frames {where}", params) as cur:
-            total = (await cur.fetchone())[0]
-        async with self._conn.execute(
-            f"SELECT id, timestamp, duration_seconds, text, language, source "
-            f"FROM audio_frames {where} ORDER BY id DESC LIMIT ? OFFSET ?",
-            params + [limit, offset],
-        ) as cur:
-            rows = [dict(r) for r in await cur.fetchall()]
-        return rows, total
+        async with self._session() as s:
+            q = select(AudioFrame)
+            cq = select(func.count()).select_from(AudioFrame)
+            if search:
+                filt = AudioFrame.text.contains(search)
+                q = q.where(filt)
+                cq = cq.where(filt)
+            total = (await s.execute(cq)).scalar()
+            rows = (await s.execute(
+                q.order_by(AudioFrame.id.desc()).limit(limit).offset(offset)
+            )).scalars().all()
+            return [
+                {"id": r.id, "timestamp": r.timestamp, "duration_seconds": r.duration_seconds,
+                 "text": r.text, "language": r.language, "source": r.source}
+                for r in rows
+            ], total
 
     async def get_os_events(
-        self, limit: int = 50, offset: int = 0, event_type: str = "", search: str = ""
+        self, limit: int = 50, offset: int = 0, event_type: str = "", search: str = "",
     ) -> tuple[list[dict], int]:
-        clauses, params = [], []
-        if event_type:
-            clauses.append("event_type = ?")
-            params.append(event_type)
-        if search:
-            clauses.append("(data LIKE ? OR source LIKE ?)")
-            params.extend([f"%{search}%"] * 2)
-        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        async with self._conn.execute(
-            f"SELECT COUNT(*) FROM os_events {where}", params
-        ) as cur:
-            total = (await cur.fetchone())[0]
-        async with self._conn.execute(
-            f"SELECT id, timestamp, event_type, source, data "
-            f"FROM os_events {where} ORDER BY id DESC LIMIT ? OFFSET ?",
-            params + [limit, offset],
-        ) as cur:
-            rows = [dict(r) for r in await cur.fetchall()]
-        return rows, total
+        async with self._session() as s:
+            q = select(OsEvent)
+            cq = select(func.count()).select_from(OsEvent)
+            if event_type:
+                q = q.where(OsEvent.event_type == event_type)
+                cq = cq.where(OsEvent.event_type == event_type)
+            if search:
+                filt = OsEvent.data.contains(search) | OsEvent.source.contains(search)
+                q = q.where(filt)
+                cq = cq.where(filt)
+            total = (await s.execute(cq)).scalar()
+            rows = (await s.execute(
+                q.order_by(OsEvent.id.desc()).limit(limit).offset(offset)
+            )).scalars().all()
+            return [
+                {"id": r.id, "timestamp": r.timestamp, "event_type": r.event_type,
+                 "source": r.source, "data": r.data}
+                for r in rows
+            ], total
 
     async def get_last_os_event_data(self, event_type: str, source: str) -> str | None:
-        async with self._conn.execute(
-            "SELECT data FROM os_events WHERE event_type = ? AND source = ? "
-            "ORDER BY id DESC LIMIT 1",
-            (event_type, source),
-        ) as cur:
-            row = await cur.fetchone()
-            return row["data"] if row else None
+        async with self._session() as s:
+            row = (await s.execute(
+                select(OsEvent.data)
+                .where(OsEvent.event_type == event_type, OsEvent.source == source)
+                .order_by(OsEvent.id.desc()).limit(1)
+            )).scalar_one_or_none()
+            return row
 
     async def get_last_frame_hash(self, display_id: int) -> str | None:
-        async with self._conn.execute(
-            "SELECT image_hash FROM frames WHERE display_id = ? ORDER BY id DESC LIMIT 1",
-            (display_id,),
-        ) as cur:
-            row = await cur.fetchone()
-            return row["image_hash"] if row else None
+        async with self._session() as s:
+            return (await s.execute(
+                select(Frame.image_hash)
+                .where(Frame.display_id == display_id)
+                .order_by(Frame.id.desc()).limit(1)
+            )).scalar_one_or_none()
 
-    # -- state (each collector tracks its own cursor) --
+    async def row_exists(self, table: str, row_id: int) -> bool:
+        """Check if a row exists in an allowed table."""
+        allowed = {
+            "frames": Frame, "audio_frames": AudioFrame, "os_events": OsEvent,
+            "episodes": Episode, "playbook_entries": PlaybookEntry,
+        }
+        model = allowed.get(table)
+        if not model:
+            return False
+        async with self._session() as s:
+            return (await s.execute(
+                select(model.id).where(model.id == row_id)
+            )).scalar_one_or_none() is not None
+
+    async def get_frame_image_path(self, frame_id: int) -> str | None:
+        async with self._session() as s:
+            return (await s.execute(
+                select(Frame.image_path).where(Frame.id == frame_id)
+            )).scalar_one_or_none()
+
+    # -- state --
 
     async def get_state(self, key: str, default: int = 0) -> int:
-        async with self._conn.execute(
-            "SELECT value FROM state WHERE key = ?", (key,)
-        ) as cur:
-            row = await cur.fetchone()
-            val = int(row["value"]) if row else default
+        async with self._session() as s:
+            row = (await s.execute(
+                select(State.value).where(State.key == key)
+            )).scalar_one_or_none()
+            val = int(row) if row else default
             logger.debug("get_state(%s) = %d", key, val)
             return val
 
     async def set_state(self, key: str, value: int):
-        await self._conn.execute(
-            "INSERT INTO state (key, value) VALUES (?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            (key, str(value)),
-        )
-        await self._conn.commit()
-        logger.debug("set_state(%s) = %d", key, value)
+        async with self._session() as s:
+            existing = (await s.execute(
+                select(State).where(State.key == key)
+            )).scalar_one_or_none()
+            if existing:
+                existing.value = str(value)
+            else:
+                s.add(State(key=key, value=str(value)))
+            await s.commit()
+            logger.debug("set_state(%s) = %d", key, value)
 
     async def get_state_float(self, key: str, default: float = 0.0) -> float:
-        async with self._conn.execute(
-            "SELECT value FROM state WHERE key = ?", (key,)
-        ) as cur:
-            row = await cur.fetchone()
-            return float(row["value"]) if row else default
+        async with self._session() as s:
+            row = (await s.execute(
+                select(State.value).where(State.key == key)
+            )).scalar_one_or_none()
+            return float(row) if row else default
 
     async def set_state_float(self, key: str, value: float):
-        await self._conn.execute(
-            "INSERT INTO state (key, value) VALUES (?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            (key, str(value)),
-        )
-        await self._conn.commit()
+        async with self._session() as s:
+            existing = (await s.execute(
+                select(State).where(State.key == key)
+            )).scalar_one_or_none()
+            if existing:
+                existing.value = str(value)
+            else:
+                s.add(State(key=key, value=str(value)))
+            await s.commit()
 
     # -- episodes --
 
     async def insert_episode(
-        self,
-        summary: str,
-        app_names: str,
-        frame_count: int,
-        started_at: str,
-        ended_at: str,
-        frame_id_min: int = 0,
-        frame_id_max: int = 0,
-        frame_source: str = "",
+        self, summary: str, app_names: str, frame_count: int,
+        started_at: str, ended_at: str,
+        frame_id_min: int = 0, frame_id_max: int = 0, frame_source: str = "",
     ) -> int:
-        async with self._conn.execute(
-            "INSERT INTO episodes (summary, app_names, frame_count, started_at, ended_at, "
-            "frame_id_min, frame_id_max, frame_source) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (summary, app_names, frame_count, started_at, ended_at,
-             frame_id_min, frame_id_max, frame_source),
-        ) as cur:
-            await self._conn.commit()
-            logger.debug(
-                "inserted episode id=%d frame_count=%d range=[%s, %s] frames=[%d, %d]",
-                cur.lastrowid, frame_count, started_at, ended_at, frame_id_min, frame_id_max,
+        async with self._session() as s:
+            ep = Episode(
+                summary=summary, app_names=app_names, frame_count=frame_count,
+                started_at=started_at, ended_at=ended_at,
+                frame_id_min=frame_id_min, frame_id_max=frame_id_max, frame_source=frame_source,
             )
-            return cur.lastrowid
+            s.add(ep)
+            await s.commit()
+            await s.refresh(ep)
+            logger.debug("inserted episode id=%d frame_count=%d", ep.id, frame_count)
+            return ep.id
 
     async def get_recent_episodes(self, days: int = 7) -> list[dict]:
-        datetime.now(timezone.utc).isoformat()
-        async with self._conn.execute(
-            "SELECT * FROM episodes WHERE created_at >= datetime('now', ?) ORDER BY created_at",
-            (f"-{days} days",),
-        ) as cur:
-            rows = await cur.fetchall()
-            return [dict(r) for r in rows]
+        async with self._session() as s:
+            rows = (await s.execute(
+                select(Episode)
+                .where(Episode.created_at >= func.datetime("now", f"-{days} days"))
+                .order_by(Episode.created_at)
+            )).scalars().all()
+            return [self._ep_dict(r) for r in rows]
 
     async def get_all_episodes(self, limit: int = 100, offset: int = 0, search: str = "") -> list[dict]:
-        clauses, params = [], []
-        if search:
-            clauses.append("(summary LIKE ? OR app_names LIKE ?)")
-            params.extend([f"%{search}%"] * 2)
-        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        async with self._conn.execute(
-            f"SELECT * FROM episodes {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
-            params + [limit, offset],
-        ) as cur:
-            rows = await cur.fetchall()
-            return [dict(r) for r in rows]
+        async with self._session() as s:
+            q = select(Episode)
+            if search:
+                q = q.where(Episode.summary.contains(search) | Episode.app_names.contains(search))
+            rows = (await s.execute(
+                q.order_by(Episode.created_at.desc()).limit(limit).offset(offset)
+            )).scalars().all()
+            return [self._ep_dict(r) for r in rows]
 
     async def count_episodes(self, search: str = "") -> int:
-        clauses, params = [], []
-        if search:
-            clauses.append("(summary LIKE ? OR app_names LIKE ?)")
-            params.extend([f"%{search}%"] * 2)
-        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        async with self._conn.execute(f"SELECT COUNT(*) FROM episodes {where}", params) as cur:
-            return (await cur.fetchone())[0]
+        async with self._session() as s:
+            q = select(func.count()).select_from(Episode)
+            if search:
+                q = q.where(Episode.summary.contains(search) | Episode.app_names.contains(search))
+            return (await s.execute(q)).scalar()
 
     # -- playbook entries --
 
     async def upsert_playbook(
-        self,
-        name: str,
-        context: str,
-        action: str,
-        confidence: float,
-        evidence: str,
-        maturity: str = "nascent",
+        self, name: str, context: str, action: str,
+        confidence: float, evidence: str, maturity: str = "nascent",
     ):
-        await self._conn.execute(
-            "INSERT INTO playbook_entries (name, context, action, confidence, maturity, evidence, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, datetime('now')) "
-            "ON CONFLICT(name) DO UPDATE SET "
-            "context=excluded.context, action=excluded.action, "
-            "confidence=excluded.confidence, maturity=excluded.maturity, "
-            "evidence=excluded.evidence, "
-            "updated_at=datetime('now')",
-            (name, context, action, confidence, maturity, evidence),
-        )
-        await self._conn.commit()
-        logger.debug(
-            "upserted playbook name=%s confidence=%.2f maturity=%s",
-            name, confidence, maturity,
-        )
+        async with self._session() as s:
+            existing = (await s.execute(
+                select(PlaybookEntry).where(PlaybookEntry.name == name)
+            )).scalar_one_or_none()
+            if existing:
+                existing.context = context
+                existing.action = action
+                existing.confidence = confidence
+                existing.maturity = maturity
+                existing.evidence = evidence
+                existing.updated_at = func.datetime("now")
+            else:
+                s.add(PlaybookEntry(
+                    name=name, context=context, action=action,
+                    confidence=confidence, maturity=maturity, evidence=evidence,
+                ))
+            await s.commit()
+            logger.debug("upserted playbook name=%s confidence=%.2f maturity=%s", name, confidence, maturity)
 
     async def get_all_playbooks(self, search: str = "") -> list[dict]:
-        clauses, params = [], []
-        if search:
-            clauses.append("(name LIKE ? OR context LIKE ? OR action LIKE ?)")
-            params.extend([f"%{search}%"] * 3)
-        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        async with self._conn.execute(
-            f"SELECT * FROM playbook_entries {where} ORDER BY confidence DESC", params
-        ) as cur:
-            rows = await cur.fetchall()
-            return [dict(r) for r in rows]
+        async with self._session() as s:
+            q = select(PlaybookEntry)
+            if search:
+                q = q.where(
+                    PlaybookEntry.name.contains(search)
+                    | PlaybookEntry.context.contains(search)
+                    | PlaybookEntry.action.contains(search)
+                )
+            rows = (await s.execute(q.order_by(PlaybookEntry.confidence.desc()))).scalars().all()
+            return [self._pb_dict(r) for r in rows]
 
     # -- playbook history --
 
     async def record_playbook_snapshot(
-        self,
-        playbook_name: str,
-        confidence: float,
-        maturity: str,
-        evidence: str,
-        change_reason: str = "",
+        self, playbook_name: str, confidence: float,
+        maturity: str, evidence: str, change_reason: str = "",
     ):
-        """Record a snapshot of a playbook entry's state in history."""
-        await self._conn.execute(
-            "INSERT INTO playbook_history (playbook_name, confidence, maturity, evidence, change_reason) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (playbook_name, confidence, maturity, evidence, change_reason),
-        )
-        await self._conn.commit()
+        async with self._session() as s:
+            s.add(PlaybookHistory(
+                playbook_name=playbook_name, confidence=confidence,
+                maturity=maturity, evidence=evidence, change_reason=change_reason,
+            ))
+            await s.commit()
 
     async def get_playbook_history(self, name: str) -> list[dict]:
-        async with self._conn.execute(
-            "SELECT * FROM playbook_history WHERE playbook_name = ? ORDER BY created_at",
-            (name,),
-        ) as cur:
-            return [dict(r) for r in await cur.fetchall()]
+        async with self._session() as s:
+            rows = (await s.execute(
+                select(PlaybookHistory)
+                .where(PlaybookHistory.playbook_name == name)
+                .order_by(PlaybookHistory.created_at)
+            )).scalars().all()
+            return [
+                {"id": r.id, "playbook_name": r.playbook_name, "confidence": r.confidence,
+                 "maturity": r.maturity, "evidence": r.evidence,
+                 "change_reason": r.change_reason, "created_at": r.created_at}
+                for r in rows
+            ]
 
-    # -- episode search (for recall tools) --
+    # -- episode search --
 
     async def search_episodes_by_keyword(self, query: str, limit: int = 10) -> list[dict]:
-        async with self._conn.execute(
-            "SELECT id, summary, app_names, started_at, ended_at "
-            "FROM episodes WHERE summary LIKE ? ORDER BY id DESC LIMIT ?",
-            (f"%{query}%", limit),
-        ) as cur:
-            return [dict(r) for r in await cur.fetchall()]
+        async with self._session() as s:
+            rows = (await s.execute(
+                select(Episode.id, Episode.summary, Episode.app_names, Episode.started_at, Episode.ended_at)
+                .where(Episode.summary.contains(query))
+                .order_by(Episode.id.desc()).limit(limit)
+            )).all()
+            return [{"id": r[0], "summary": r[1], "app_names": r[2], "started_at": r[3], "ended_at": r[4]} for r in rows]
 
     async def get_episodes_by_app(self, app_name: str, limit: int = 20) -> list[dict]:
-        async with self._conn.execute(
-            "SELECT id, summary, app_names, started_at, ended_at "
-            "FROM episodes WHERE app_names LIKE ? ORDER BY id DESC LIMIT ?",
-            (f"%{app_name}%", limit),
-        ) as cur:
-            return [dict(r) for r in await cur.fetchall()]
+        async with self._session() as s:
+            rows = (await s.execute(
+                select(Episode.id, Episode.summary, Episode.app_names, Episode.started_at, Episode.ended_at)
+                .where(Episode.app_names.contains(app_name))
+                .order_by(Episode.id.desc()).limit(limit)
+            )).all()
+            return [{"id": r[0], "summary": r[1], "app_names": r[2], "started_at": r[3], "ended_at": r[4]} for r in rows]
 
     async def get_episodes_by_timerange(self, hours: int = 24) -> list[dict]:
-        async with self._conn.execute(
-            "SELECT id, summary, app_names, started_at, ended_at "
-            "FROM episodes WHERE created_at >= datetime('now', ?) ORDER BY created_at DESC",
-            (f"-{hours} hours",),
-        ) as cur:
-            return [dict(r) for r in await cur.fetchall()]
+        async with self._session() as s:
+            rows = (await s.execute(
+                select(Episode.id, Episode.summary, Episode.app_names, Episode.started_at, Episode.ended_at)
+                .where(Episode.created_at >= func.datetime("now", f"-{hours} hours"))
+                .order_by(Episode.created_at.desc())
+            )).all()
+            return [{"id": r[0], "summary": r[1], "app_names": r[2], "started_at": r[3], "ended_at": r[4]} for r in rows]
 
     # -- token usage --
 
     async def record_usage(
-        self,
-        model: str,
-        layer: str,
-        input_tokens: int,
-        output_tokens: int,
-        cost_usd: float,
+        self, model: str, layer: str,
+        input_tokens: int, output_tokens: int, cost_usd: float,
     ):
-        await self._conn.execute(
-            "INSERT INTO token_usage (model, layer, input_tokens, output_tokens, cost_usd) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (model, layer, input_tokens, output_tokens, cost_usd),
-        )
-        await self._conn.commit()
-        logger.debug(
-            "recorded usage: model=%s layer=%s in=%d out=%d cost=$%.4f",
-            model, layer, input_tokens, output_tokens, cost_usd,
-        )
+        async with self._session() as s:
+            s.add(TokenUsage(
+                model=model, layer=layer,
+                input_tokens=input_tokens, output_tokens=output_tokens, cost_usd=cost_usd,
+            ))
+            await s.commit()
+            logger.debug("recorded usage: model=%s layer=%s cost=$%.4f", model, layer, cost_usd)
 
     async def get_daily_spend(self) -> float:
-        """Sum today's LLM costs."""
-        async with self._conn.execute(
-            "SELECT COALESCE(SUM(cost_usd), 0.0) as total "
-            "FROM token_usage WHERE created_at >= datetime('now', '-1 days')",
-        ) as cur:
-            row = await cur.fetchone()
-            return float(row["total"])
+        async with self._session() as s:
+            result = (await s.execute(
+                select(func.coalesce(func.sum(TokenUsage.cost_usd), 0.0))
+                .where(TokenUsage.created_at >= func.datetime("now", "-1 days"))
+            )).scalar()
+            return float(result)
 
     async def get_usage_summary(self, days: int = 7) -> dict:
-        """Get token usage breakdown by layer and model for the past N days."""
-        rows_by_layer = []
-        async with self._conn.execute(
-            "SELECT layer, model, "
-            "SUM(input_tokens) as total_input, "
-            "SUM(output_tokens) as total_output, "
-            "SUM(cost_usd) as total_cost, "
-            "COUNT(*) as call_count "
-            "FROM token_usage "
-            "WHERE created_at >= datetime('now', ?) "
-            "GROUP BY layer, model "
-            "ORDER BY total_cost DESC",
-            (f"-{days} days",),
-        ) as cur:
-            rows_by_layer = [dict(r) for r in await cur.fetchall()]
+        async with self._session() as s:
+            by_layer = (await s.execute(text(
+                "SELECT layer, model, "
+                "SUM(input_tokens) as total_input, SUM(output_tokens) as total_output, "
+                "SUM(cost_usd) as total_cost, COUNT(*) as call_count "
+                "FROM token_usage WHERE created_at >= datetime('now', :days) "
+                "GROUP BY layer, model ORDER BY total_cost DESC"
+            ).bindparams(days=f"-{days} days"))).mappings().all()
 
-        rows_by_day = []
-        async with self._conn.execute(
-            "SELECT date(created_at) as day, "
-            "SUM(input_tokens) as total_input, "
-            "SUM(output_tokens) as total_output, "
-            "SUM(cost_usd) as total_cost, "
-            "COUNT(*) as call_count "
-            "FROM token_usage "
-            "WHERE created_at >= datetime('now', ?) "
-            "GROUP BY date(created_at) "
-            "ORDER BY day",
-            (f"-{days} days",),
-        ) as cur:
-            rows_by_day = [dict(r) for r in await cur.fetchall()]
+            by_day = (await s.execute(text(
+                "SELECT date(created_at) as day, "
+                "SUM(input_tokens) as total_input, SUM(output_tokens) as total_output, "
+                "SUM(cost_usd) as total_cost, COUNT(*) as call_count "
+                "FROM token_usage WHERE created_at >= datetime('now', :days) "
+                "GROUP BY date(created_at) ORDER BY day"
+            ).bindparams(days=f"-{days} days"))).mappings().all()
 
-        total_cost = sum(r["total_cost"] for r in rows_by_layer)
-        total_input = sum(r["total_input"] for r in rows_by_layer)
-        total_output = sum(r["total_output"] for r in rows_by_layer)
-        total_calls = sum(r["call_count"] for r in rows_by_layer)
+            rows_layer = [dict(r) for r in by_layer]
+            rows_day = [dict(r) for r in by_day]
+            total_cost = sum(r["total_cost"] for r in rows_layer)
+            total_input = sum(r["total_input"] for r in rows_layer)
+            total_output = sum(r["total_output"] for r in rows_layer)
+            total_calls = sum(r["call_count"] for r in rows_layer)
 
-        return {
-            "days": days,
-            "total_cost_usd": round(total_cost, 4),
-            "total_input_tokens": total_input,
-            "total_output_tokens": total_output,
-            "total_calls": total_calls,
-            "by_layer": rows_by_layer,
-            "by_day": rows_by_day,
-        }
+            return {
+                "days": days,
+                "total_cost_usd": round(total_cost, 4),
+                "total_input_tokens": total_input,
+                "total_output_tokens": total_output,
+                "total_calls": total_calls,
+                "by_layer": rows_layer,
+                "by_day": rows_day,
+            }
 
     # -- pipeline logs --
 
     async def insert_pipeline_log(
-        self,
-        stage: str,
-        prompt: str,
-        response: str,
-        model: str = "",
-        input_tokens: int = 0,
-        output_tokens: int = 0,
-        cost_usd: float = 0.0,
+        self, stage: str, prompt: str, response: str,
+        model: str = "", input_tokens: int = 0,
+        output_tokens: int = 0, cost_usd: float = 0.0,
     ) -> int:
-        async with self._conn.execute(
-            "INSERT INTO pipeline_logs (stage, prompt, response, model, input_tokens, output_tokens, cost_usd) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (stage, prompt, response, model, input_tokens, output_tokens, cost_usd),
-        ) as cur:
-            await self._conn.commit()
-            return cur.lastrowid
+        async with self._session() as s:
+            log = PipelineLog(
+                stage=stage, prompt=prompt, response=response,
+                model=model, input_tokens=input_tokens,
+                output_tokens=output_tokens, cost_usd=cost_usd,
+            )
+            s.add(log)
+            await s.commit()
+            await s.refresh(log)
+            return log.id
 
     async def get_pipeline_logs(self, limit: int = 50, offset: int = 0, search: str = "") -> tuple[list[dict], int]:
-        clauses, params = [], []
-        if search:
-            clauses.append("(stage LIKE ? OR model LIKE ? OR prompt LIKE ? OR response LIKE ?)")
-            params.extend([f"%{search}%"] * 4)
-        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        async with self._conn.execute(f"SELECT COUNT(*) FROM pipeline_logs {where}", params) as cur:
-            total = (await cur.fetchone())[0]
-        async with self._conn.execute(
-            f"SELECT id, stage, prompt, response, model, input_tokens, output_tokens, cost_usd, created_at "
-            f"FROM pipeline_logs {where} ORDER BY id DESC LIMIT ? OFFSET ?",
-            params + [limit, offset],
-        ) as cur:
-            rows = [dict(r) for r in await cur.fetchall()]
-        return rows, total
+        async with self._session() as s:
+            q = select(PipelineLog)
+            cq = select(func.count()).select_from(PipelineLog)
+            if search:
+                filt = (
+                    PipelineLog.stage.contains(search) | PipelineLog.model.contains(search)
+                    | PipelineLog.prompt.contains(search) | PipelineLog.response.contains(search)
+                )
+                q = q.where(filt)
+                cq = cq.where(filt)
+            total = (await s.execute(cq)).scalar()
+            rows = (await s.execute(
+                q.order_by(PipelineLog.id.desc()).limit(limit).offset(offset)
+            )).scalars().all()
+            return [
+                {"id": r.id, "stage": r.stage, "prompt": r.prompt, "response": r.response,
+                 "model": r.model, "input_tokens": r.input_tokens,
+                 "output_tokens": r.output_tokens, "cost_usd": r.cost_usd, "created_at": r.created_at}
+                for r in rows
+            ], total
 
     # -- batch delete --
 
     async def delete_rows(self, table: str, ids: list[int]) -> int:
-        """Delete rows by IDs from an allowed table. Returns count deleted."""
-        allowed = {"frames", "audio_frames", "os_events", "episodes", "playbook_entries"}
-        if table not in allowed:
+        allowed = {
+            "frames": Frame, "audio_frames": AudioFrame, "os_events": OsEvent,
+            "episodes": Episode, "playbook_entries": PlaybookEntry,
+        }
+        model = allowed.get(table)
+        if not model:
             raise ValueError(f"delete not allowed on table: {table}")
         if not ids:
             return 0
-        placeholders = ",".join("?" * len(ids))
-        async with self._conn.execute(
-            f"DELETE FROM {table} WHERE id IN ({placeholders})", ids
-        ) as cur:
-            await self._conn.commit()
-            return cur.rowcount
+        async with self._session() as s:
+            result = await s.execute(delete(model).where(model.id.in_(ids)))
+            await s.commit()
+            return result.rowcount
 
     # -- stats --
 
     async def get_status(self) -> dict:
-        episode_count = 0
-        playbook_count = 0
-        async with self._conn.execute("SELECT COUNT(*) as c FROM episodes") as cur:
-            row = await cur.fetchone()
-            episode_count = row["c"]
-        async with self._conn.execute(
-            "SELECT COUNT(*) as c FROM playbook_entries"
-        ) as cur:
-            row = await cur.fetchone()
-            playbook_count = row["c"]
-        # Check if capture is alive: last frame within 2 minutes
-        last_frame_at = None
-        async with self._conn.execute(
-            "SELECT timestamp FROM frames ORDER BY id DESC LIMIT 1"
-        ) as cur:
-            row = await cur.fetchone()
-            if row:
-                last_frame_at = row["timestamp"]
+        async with self._session() as s:
+            episode_count = (await s.execute(select(func.count()).select_from(Episode))).scalar()
+            playbook_count = (await s.execute(select(func.count()).select_from(PlaybookEntry))).scalar()
+            last_frame = (await s.execute(
+                select(Frame.timestamp).order_by(Frame.id.desc()).limit(1)
+            )).scalar_one_or_none()
 
-        capture_alive = False
-        if last_frame_at:
-            from datetime import datetime, timezone, timedelta
-            try:
-                ts = datetime.fromisoformat(last_frame_at)
-                capture_alive = (datetime.now(timezone.utc) - ts) < timedelta(minutes=2)
-            except Exception:
-                pass
+            capture_alive = False
+            if last_frame:
+                from datetime import datetime, timezone, timedelta
+                try:
+                    ts = datetime.fromisoformat(last_frame)
+                    capture_alive = (datetime.now(timezone.utc) - ts) < timedelta(minutes=2)
+                except Exception:
+                    pass
 
-        return {
-            "episode_count": episode_count,
-            "playbook_count": playbook_count,
-            "capture_alive": capture_alive,
-            "last_frame_at": last_frame_at,
-        }
+            return {
+                "episode_count": episode_count,
+                "playbook_count": playbook_count,
+                "capture_alive": capture_alive,
+                "last_frame_at": last_frame,
+            }
 
-    # ── Routines ──
+    # -- routines --
 
     async def upsert_routine(
         self, name: str, trigger: str, goal: str,
         steps: str, uses: str, confidence: float, maturity: str = "nascent",
     ):
-        await self._conn.execute(
-            "INSERT INTO routines (name, trigger, goal, steps, uses, confidence, maturity, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now')) "
-            "ON CONFLICT(name) DO UPDATE SET "
-            "trigger=excluded.trigger, goal=excluded.goal, steps=excluded.steps, "
-            "uses=excluded.uses, confidence=excluded.confidence, maturity=excluded.maturity, "
-            "updated_at=datetime('now')",
-            (name, trigger, goal, steps, uses, confidence, maturity),
-        )
-        await self._conn.commit()
+        async with self._session() as s:
+            existing = (await s.execute(
+                select(Routine).where(Routine.name == name)
+            )).scalar_one_or_none()
+            if existing:
+                existing.trigger = trigger
+                existing.goal = goal
+                existing.steps = steps
+                existing.uses = uses
+                existing.confidence = confidence
+                existing.maturity = maturity
+                existing.updated_at = func.datetime("now")
+            else:
+                s.add(Routine(
+                    name=name, trigger=trigger, goal=goal,
+                    steps=steps, uses=uses, confidence=confidence, maturity=maturity,
+                ))
+            await s.commit()
 
     async def get_all_routines(self, search: str = "") -> list[dict]:
-        clauses, params = [], []
-        if search:
-            clauses.append("(name LIKE ? OR trigger LIKE ? OR goal LIKE ?)")
-            params.extend([f"%{search}%"] * 3)
-        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        async with self._conn.execute(
-            f"SELECT * FROM routines {where} ORDER BY confidence DESC", params
-        ) as cur:
-            return [dict(r) for r in await cur.fetchall()]
+        async with self._session() as s:
+            q = select(Routine)
+            if search:
+                q = q.where(
+                    Routine.name.contains(search) | Routine.trigger.contains(search)
+                    | Routine.goal.contains(search)
+                )
+            rows = (await s.execute(q.order_by(Routine.confidence.desc()))).scalars().all()
+            return [
+                {"id": r.id, "name": r.name, "trigger": r.trigger, "goal": r.goal,
+                 "steps": r.steps, "uses": r.uses, "confidence": r.confidence,
+                 "maturity": r.maturity, "created_at": r.created_at, "updated_at": r.updated_at}
+                for r in rows
+            ]
 
-    # ── Chat messages ──
+    # -- chat messages --
 
     async def append_chat_message(self, role: str, content: str, proposals: str = "[]"):
-        """Insert a message and trim to CHAT_WINDOW_SIZE."""
-        await self._conn.execute(
-            "INSERT INTO chat_messages (role, content, proposals) VALUES (?, ?, ?)",
-            (role, content, proposals),
-        )
-        await self._conn.execute(
-            "DELETE FROM chat_messages WHERE id NOT IN "
-            "(SELECT id FROM chat_messages ORDER BY id DESC LIMIT ?)",
-            (CHAT_WINDOW_SIZE,),
-        )
-        await self._conn.commit()
+        async with self._session() as s:
+            s.add(ChatMessage(role=role, content=content, proposals=proposals))
+            # Trim to window size
+            subq = select(ChatMessage.id).order_by(ChatMessage.id.desc()).limit(CHAT_WINDOW_SIZE)
+            await s.execute(delete(ChatMessage).where(ChatMessage.id.not_in(subq)))
+            await s.commit()
 
     async def get_chat_messages(self) -> list[dict]:
-        """Return up to CHAT_WINDOW_SIZE most recent messages, oldest first."""
-        cursor = await self._conn.execute(
-            "SELECT id, role, content, proposals FROM chat_messages ORDER BY id ASC"
-        )
-        rows = await cursor.fetchall()
-        return [{"id": r["id"], "role": r["role"], "content": r["content"], "proposals": r["proposals"]} for r in rows]
+        async with self._session() as s:
+            rows = (await s.execute(
+                select(ChatMessage).order_by(ChatMessage.id.asc())
+            )).scalars().all()
+            return [
+                {"id": r.id, "role": r.role, "content": r.content, "proposals": r.proposals}
+                for r in rows
+            ]
 
     async def update_chat_proposals(self, msg_id: int, proposals_json: str):
-        """Update the proposals JSON for a specific chat message."""
-        await self._conn.execute(
-            "UPDATE chat_messages SET proposals = ? WHERE id = ?",
-            (proposals_json, msg_id),
-        )
-        await self._conn.commit()
+        async with self._session() as s:
+            await s.execute(
+                update(ChatMessage).where(ChatMessage.id == msg_id).values(proposals=proposals_json)
+            )
+            await s.commit()
 
     async def clear_chat_messages(self):
-        """Delete all chat messages."""
-        await self._conn.execute("DELETE FROM chat_messages")
-        await self._conn.commit()
+        async with self._session() as s:
+            await s.execute(delete(ChatMessage))
+            await s.commit()
+
+    # -- helpers --
+
+    @staticmethod
+    def _ep_dict(e: Episode) -> dict:
+        return {
+            "id": e.id, "summary": e.summary, "app_names": e.app_names,
+            "frame_count": e.frame_count, "started_at": e.started_at,
+            "ended_at": e.ended_at, "frame_id_min": e.frame_id_min,
+            "frame_id_max": e.frame_id_max, "frame_source": e.frame_source,
+            "created_at": e.created_at,
+        }
+
+    @staticmethod
+    def _pb_dict(p: PlaybookEntry) -> dict:
+        return {
+            "id": p.id, "name": p.name, "context": p.context,
+            "action": p.action, "confidence": p.confidence,
+            "maturity": p.maturity, "evidence": p.evidence,
+            "last_evidence_at": p.last_evidence_at,
+            "created_at": p.created_at, "updated_at": p.updated_at,
+        }

@@ -143,17 +143,14 @@ async def list_os_events(
 async def get_frame_image(request: Request, frame_id: int):
     """Serve a frame's compressed screenshot."""
     db = request.app.state.db
-    async with db._conn.execute(
-        "SELECT image_path FROM frames WHERE id = ?", (frame_id,)
-    ) as cur:
-        row = await cur.fetchone()
+    image_path = await db.get_frame_image_path(frame_id)
 
-    if not row or not row["image_path"]:
+    if not image_path:
         return {"error": "no image"}
 
     frames_base_dir = request.app.state.settings.frames_base_dir
     # image_path is like "frames/2026-03-14/123456_d1.webp"
-    file_path = Path(frames_base_dir).parent / row["image_path"]
+    file_path = Path(frames_base_dir).parent / image_path
     if not file_path.exists():
         return {"error": "file not found"}
 

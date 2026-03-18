@@ -366,10 +366,7 @@ async def _exec_delete(db, table: str, ids: list[int]) -> dict:
 
     still_exist = []
     for row_id in ids:
-        cursor = await db._conn.execute(
-            f"SELECT id FROM {table} WHERE id = ?", (row_id,),  # noqa: S608
-        )
-        if await cursor.fetchone():
+        if await db.row_exists(table, row_id):
             still_exist.append(row_id)
 
     if still_exist:
