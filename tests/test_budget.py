@@ -149,3 +149,26 @@ class TestGetBudgetCap:
         )
         conn.commit()
         assert check_daily_budget(conn, cap_usd=2.0) is False
+
+
+class TestSyncDBWithPsycopgConn:
+    """SyncDB must accept any DBAPI connection, not just sqlite3.Connection."""
+
+    def test_accepts_non_sqlite_connection(self):
+        """SyncDB should work with any connection type via get_session fallback."""
+        from unittest.mock import MagicMock
+        from engine.storage.sync_db import SyncDB
+
+        # Simulate a psycopg-like connection (not sqlite3.Connection, not Session)
+        fake_conn = MagicMock()
+        fake_conn.__class__.__name__ = "Connection"
+
+        # This should NOT raise TypeError
+        try:
+            db = SyncDB(fake_conn)
+            # If we get here, SyncDB accepted it
+            assert db.session is not None
+        except TypeError as e:
+            if "Expected Session or Connection" in str(e):
+                pytest.fail(f"SyncDB rejected non-sqlite connection: {e}")
+            raise

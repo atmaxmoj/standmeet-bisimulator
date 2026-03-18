@@ -30,7 +30,7 @@ class SyncDB:
             self.session = session_or_conn
             self._owns_session = False
         elif isinstance(session_or_conn, sqlite3.Connection):
-            # Legacy: wrap raw connection in a session
+            # SQLite: wrap raw connection in a session
             from sqlalchemy import create_engine
             from sqlalchemy.orm import sessionmaker
             from engine.storage.models import Base
@@ -39,7 +39,10 @@ class SyncDB:
             self.session = sessionmaker(bind=engine)()
             self._owns_session = True
         else:
-            raise TypeError(f"Expected Session or Connection, got {type(session_or_conn)}")
+            # Other DBAPI connections (psycopg, etc.): use get_session
+            from engine.storage.session import get_session
+            self.session = get_session(session_or_conn)
+            self._owns_session = True
 
     # ── Token usage ──
 
