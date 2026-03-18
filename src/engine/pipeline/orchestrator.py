@@ -9,11 +9,11 @@ import logging
 import sqlite3
 
 from engine.config import MODEL_FAST, MODEL_DEEP
-from engine.domain.prompts.episode import EPISODE_PROMPT
-from engine.domain.prompts.playbook import PLAYBOOK_PROMPT
-from engine.domain.prompts.routine import ROUTINE_PROMPT
-from engine.infra.llm import LLMClient
-from engine.pipeline.stages.collect import load_frames, store_episodes
+from engine.prompts.episode import EPISODE_PROMPT
+from engine.prompts.playbook import PLAYBOOK_PROMPT
+from engine.prompts.routine import ROUTINE_PROMPT
+from engine.llm.client import LLMClient
+from engine.etl.collect import load_frames, store_episodes
 from engine.pipeline.stages.extract import build_context, parse_llm_json
 from engine.pipeline.stages.distill import format_episodes, format_playbooks
 from engine.pipeline.stages.compose import (
@@ -107,8 +107,8 @@ def _run_distill_agentic(llm: LLMClient, conn: sqlite3.Connection) -> int:
     import asyncio
     import os
     from claude_agent_sdk import query as sdk_query, ClaudeAgentOptions, ResultMessage
-    from engine.domain.prompts.playbook_agent import PLAYBOOK_AGENT_PROMPT
-    from engine.pipeline.stages.distill_mcp import create_distill_mcp_server
+    from engine.prompts.playbook_agent import PLAYBOOK_AGENT_PROMPT
+    from engine.agents.tools.distill_mcp import create_distill_mcp_server
 
     mcp_server = create_distill_mcp_server(conn)
     logger.info("run_distill (agentic): starting with MCP server")

@@ -42,7 +42,7 @@ class CannedLLM(LLMClient):
 
 @pytest.fixture(autouse=True)
 def _memory_dir(tmp_path):
-    import engine.infra.memory_file as mf
+    import engine.storage.memory_file as mf
     old = mf.MEMORY_DIR
     mf.MEMORY_DIR = tmp_path / "memory"
     yield
@@ -271,7 +271,7 @@ class TestDistillE2E:
     @pytest.mark.asyncio
     async def test_distill_writes_memory_file(self, db, tmp_path):
         """Distill should write playbook markdown files."""
-        import engine.infra.memory_file as mf
+        import engine.storage.memory_file as mf
         mf.MEMORY_DIR = tmp_path / "memory"
 
         llm_ep = CannedLLM([EPISODE_LLM_RESPONSE])
@@ -347,7 +347,7 @@ class TestRoutineE2E:
     @pytest.mark.asyncio
     async def test_routine_writes_memory_file(self, db, tmp_path):
         """Routine extraction should write markdown files."""
-        import engine.infra.memory_file as mf
+        import engine.storage.memory_file as mf
         mf.MEMORY_DIR = tmp_path / "memory"
 
         llm_ep = CannedLLM([EPISODE_LLM_RESPONSE])

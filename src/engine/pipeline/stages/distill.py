@@ -7,8 +7,8 @@ No DB writes, no side effects.
 import logging
 
 from engine.config import MODEL_DEEP
-from engine.domain.prompts.playbook import PLAYBOOK_PROMPT
-from engine.infra.llm import LLMClient, LLMResponse
+from engine.prompts.playbook import PLAYBOOK_PROMPT
+from engine.llm import LLMClient, LLMResponse
 from engine.pipeline.stages.extract import parse_llm_json
 
 logger = logging.getLogger(__name__)

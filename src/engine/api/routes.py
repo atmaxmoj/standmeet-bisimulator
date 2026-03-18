@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 def _notify_pipeline():
     """Push lightweight signal to Huey queue. No-op if Huey not available."""
     try:
-        from engine.tasks import on_new_data
+        from engine.scheduler.tasks import on_new_data
         on_new_data()
     except Exception:
         pass
@@ -371,9 +371,9 @@ async def backfill(request: Request):
     """
     import sqlite3
     from engine.config import Settings
-    from engine.domain.entities.frame import Frame
-    from engine.pipeline.stages.filter import should_keep, detect_windows
-    from engine.tasks import process_episode
+    from engine.etl.entities import Frame
+    from engine.etl.filter import should_keep, detect_windows
+    from engine.scheduler.tasks import process_episode
 
     settings = Settings()
     conn = sqlite3.connect(settings.db_path)

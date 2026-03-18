@@ -8,9 +8,9 @@ import json
 import logging
 
 from engine.config import MODEL_FAST
-from engine.domain.entities.frame import Frame
-from engine.domain.prompts.episode import EPISODE_PROMPT
-from engine.infra.llm import LLMClient, LLMResponse
+from engine.etl.entities import Frame
+from engine.prompts.episode import EPISODE_PROMPT
+from engine.llm import LLMClient, LLMResponse
 from engine.pipeline.stages.validate import strip_fence
 
 logger = logging.getLogger(__name__)

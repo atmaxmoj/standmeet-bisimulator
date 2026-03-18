@@ -26,21 +26,31 @@ from engine.api.routes import router
 
 @pytest.fixture(autouse=True)
 def mock_engine_tasks():
-    """Mock engine.tasks to avoid SqliteHuey module-level init.
+    """Mock engine.tasks and engine.scheduler.tasks to avoid SqliteHuey module-level init.
 
-    Saves/restores real module if already loaded (avoids contaminating other test files).
+    Saves/restores real modules if already loaded (avoids contaminating other test files).
     """
     mock_process = MagicMock()
     mock_mod = ModuleType("engine.tasks")
     mock_mod.process_episode = mock_process
+    mock_mod.on_new_data = MagicMock()
 
-    original = sys.modules.get("engine.tasks")
+    mock_scheduler_mod = ModuleType("engine.scheduler.tasks")
+    mock_scheduler_mod.process_episode = mock_process
+    mock_scheduler_mod.on_new_data = MagicMock()
+
+    originals = {
+        "engine.tasks": sys.modules.get("engine.tasks"),
+        "engine.scheduler.tasks": sys.modules.get("engine.scheduler.tasks"),
+    }
     sys.modules["engine.tasks"] = mock_mod
+    sys.modules["engine.scheduler.tasks"] = mock_scheduler_mod
     yield mock_process
-    if original is not None:
-        sys.modules["engine.tasks"] = original
-    else:
-        sys.modules.pop("engine.tasks", None)
+    for key, original in originals.items():
+        if original is not None:
+            sys.modules[key] = original
+        else:
+            sys.modules.pop(key, None)
 
 
 @pytest.fixture
@@ -66,6 +76,11 @@ def patch_settings(db):
     """Patch Settings so backfill uses the test DB path."""
     mock_settings = MagicMock()
     mock_settings.return_value.db_path = db.path
+    mock_settings.return_value.anthropic_api_key = ""
+    mock_settings.return_value.claude_code_oauth_token = ""
+    mock_settings.return_value.openai_api_key = ""
+    mock_settings.return_value.openai_base_url = ""
+    mock_settings.return_value.idle_threshold_seconds = 300
     with patch("engine.config.Settings", mock_settings):
         yield
 

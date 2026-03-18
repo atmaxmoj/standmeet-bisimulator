@@ -99,47 +99,50 @@ def test_oauth_with_tools():
 
 
 def test_oauth_opus_with_tools():
-    """Test Opus model with OAuth + tools + adaptive thinking."""
-    import anthropic
+    """Test Opus model with OAuth + tools via AgentSDKClient (text-based tool loop)."""
+    from engine.llm import AgentSDKClient, ToolDef
 
     token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
     if not token:
         print("  SKIP  no CLAUDE_CODE_OAUTH_TOKEN")
         return
 
-    client = anthropic.Anthropic(
-        api_key=None,
-        auth_token=token,
-        default_headers={
-            "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
-            "user-agent": "claude-cli/2.1.75",
-            "x-app": "cli",
-        },
-    )
+    client = AgentSDKClient(auth_token=token)
+
+    tool_called = {}
+
+    def get_weather(city: str) -> dict:
+        tool_called["city"] = city
+        return {"city": city, "temp": "20°C", "condition": "sunny"}
 
     tools = [
-        {
-            "name": "get_weather",
-            "description": "Get current weather.",
-            "input_schema": {
+        ToolDef(
+            name="get_weather",
+            description="Get current weather.",
+            input_schema={
                 "type": "object",
                 "properties": {"city": {"type": "string"}},
                 "required": ["city"],
             },
-        },
+            handler=get_weather,
+        ),
     ]
 
     try:
-        resp = client.messages.create(
-            model="claude-opus-4-6",
-            max_tokens=16384,
-            messages=[{"role": "user", "content": "What's the weather in Tokyo?"}],
-            tools=tools,
-            thinking={"type": "adaptive"},
+        resp = client.complete_with_tools(
+            "What's the weather in Tokyo? Use the get_weather tool.",
+            "claude-opus-4-6",
+            tools,
+            max_turns=3,
         )
-        content = [{"type": b.type, "name": getattr(b, "name", None)} for b in resp.content]
-        save_result("opus_tools", {"content": content, "stop_reason": resp.stop_reason})
-        print(f"  Opus stop reason: {resp.stop_reason}, Content: {content}")
+        save_result("opus_tools", {
+            "text": resp.text[:500],
+            "input_tokens": resp.input_tokens,
+            "output_tokens": resp.output_tokens,
+            "tool_called": tool_called,
+        })
+        print(f"  Opus response: {resp.text[:100]}")
+        print(f"  Tool called: {tool_called}")
     except Exception as e:
         save_result("opus_tools_error", {"error": str(e), "type": type(e).__name__})
         raise

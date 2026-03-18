@@ -11,8 +11,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from engine.config import Settings
-from engine.infra.db import DB
-from engine.infra.llm import create_client
+from engine.storage.db import DB
+from engine.llm import create_client
 
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "DEBUG").upper()
 
@@ -26,7 +26,7 @@ logger = logging.getLogger("observer")
 def _start_huey_consumer():
     """Start Huey consumer in a daemon thread (no signal handler conflicts)."""
     from huey.consumer import Consumer
-    from engine.tasks import huey
+    from engine.scheduler.tasks import huey
 
     class EmbeddedConsumer(Consumer):
         def _set_signal_handlers(self):

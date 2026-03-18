@@ -145,9 +145,9 @@ def test_agentic_distill_uses_tools():
 
         save_result("distill_full", {
             "entries_written": count,
-            "tool_calls": len([l for l in logs if l["stage"] == "distill_agentic"]),
+            "tool_calls": len([row for row in logs if row["stage"] == "distill_agentic"]),
             "playbook_entries": [dict(e) for e in entries],
-            "logs": [{"stage": l["stage"], "prompt": l["prompt"][:200]} for l in logs],
+            "logs": [{"stage": row["stage"], "prompt": row["prompt"][:200]} for row in logs],
         })
         conn.close()
 

@@ -8,10 +8,10 @@ import json
 import logging
 
 from engine.config import MODEL_FAST
-from engine.infra.db import DB
-from engine.domain.prompts.episode import EPISODE_PROMPT  # noqa: F401
-from engine.infra.llm import LLMClient
-from engine.domain.entities.frame import Frame
+from engine.storage.db import DB
+from engine.prompts.episode import EPISODE_PROMPT  # noqa: F401
+from engine.llm.client import LLMClient
+from engine.etl.entities import Frame
 
 # Re-export stage functions for backwards compat
 from engine.pipeline.stages.extract import (  # noqa: F401

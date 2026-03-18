@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 from engine.config import Settings, MODEL_FAST
-from engine.infra.llm import create_client
+from engine.llm import create_client
 from engine.pipeline.stages.extract import build_context_from_dicts, parse_llm_json
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -31,9 +31,9 @@ PROMPTS_DIR = Path("/app/tests/experiments/prompts")
 
 def _production_prompts() -> dict[str, str]:
     """Load production prompts, converting .format() style to .replace() style."""
-    from engine.domain.prompts.episode import EPISODE_PROMPT
-    from engine.domain.prompts.playbook import PLAYBOOK_PROMPT
-    from engine.domain.prompts.routine import ROUTINE_PROMPT
+    from engine.prompts.episode import EPISODE_PROMPT
+    from engine.prompts.playbook import PLAYBOOK_PROMPT
+    from engine.prompts.routine import ROUTINE_PROMPT
 
     def convert(p):
         return p.replace("{{", "{").replace("}}", "}")

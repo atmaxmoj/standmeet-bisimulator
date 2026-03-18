@@ -13,7 +13,7 @@ from engine.infra.llm import ContentBlock, MessageResponse, LLMClient, LLMRespon
 @pytest.fixture(autouse=True)
 def _memory_dir(tmp_path):
     """Point memory files to temp dir for all tests."""
-    import engine.infra.memory_file as mf
+    import engine.storage.memory_file as mf
     old = mf.MEMORY_DIR
     mf.MEMORY_DIR = tmp_path / "memory"
     yield
@@ -705,7 +705,7 @@ class TestProposalExecution:
     @pytest.mark.asyncio
     async def test_update_writes_memory_file(self, seeded_db, tmp_path):
         """Approving update should write a markdown memory file."""
-        import engine.infra.memory_file as mf
+        import engine.storage.memory_file as mf
         mf.MEMORY_DIR = tmp_path / "memory"
 
         app = _make_app(seeded_db, MockLLMClient([]))

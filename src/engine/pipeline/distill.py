@@ -8,10 +8,10 @@ import json
 import logging
 
 from engine.config import MODEL_DEEP
-from engine.infra.db import DB
-from engine.domain.prompts.playbook import PLAYBOOK_PROMPT, DISTILL_PROMPT  # noqa: F401
-from engine.infra.llm import LLMClient
-from engine.infra.memory_file import write_playbook
+from engine.storage.db import DB
+from engine.prompts.playbook import PLAYBOOK_PROMPT, DISTILL_PROMPT  # noqa: F401
+from engine.llm.client import LLMClient
+from engine.storage.memory_file import write_playbook
 from engine.pipeline.stages.distill import distill_playbook
 
 logger = logging.getLogger(__name__)
