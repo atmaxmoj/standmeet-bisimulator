@@ -1,16 +1,8 @@
 """Pipeline data access — decay, budget."""
 
-import logging
 import sqlite3
 
-logger = logging.getLogger(__name__)
-
-DECAY_DAYS = 90
-DECAY_FLOOR = 0.3
-
-
 def get_all_playbooks_for_decay(conn: sqlite3.Connection) -> list[dict]:
-    """Get playbook entries with fields needed for confidence decay."""
     rows = conn.execute(
         "SELECT id, name, confidence, last_evidence_at FROM playbook_entries"
     ).fetchall()
@@ -18,6 +10,7 @@ def get_all_playbooks_for_decay(conn: sqlite3.Connection) -> list[dict]:
 
 
 def update_confidence(conn: sqlite3.Connection, entry_id: int, confidence: float):
+    # Use raw conn here because decay_confidence does conn.commit() after batch
     conn.execute(
         "UPDATE playbook_entries SET confidence = ? WHERE id = ?",
         (confidence, entry_id),
