@@ -55,14 +55,17 @@ def run(client: EngineClient):
     last_hashes: dict[int, str] = {}
     Path(FRAMES_DIR).mkdir(parents=True, exist_ok=True)
 
-    # Initialize OS event collectors
+    # Probe and initialize OS event collectors
     collectors = []
+    logger.info("── collector probe report ──")
     for c in get_all_collectors():
-        if c.available():
+        result = c.probe()
+        logger.info(result.summary())
+        if result.available:
             collectors.append(c)
-            logger.info("collector enabled: %s/%s", c.event_type, c.source)
         else:
-            logger.debug("collector skipped (not available): %s/%s", c.event_type, c.source)
+            logger.debug("collector skipped: %s/%s", c.event_type, c.source)
+    logger.info("── %d collectors enabled ──", len(collectors))
 
     logger.info(
         "capture daemon started: interval=%ds, displays=%d, collectors=%d",

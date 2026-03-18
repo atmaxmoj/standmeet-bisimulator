@@ -6,7 +6,7 @@ import signal
 import subprocess
 from pathlib import Path
 
-from capture.collectors.base import BaseCollector
+from capture.collectors.base import BaseCollector, ProbeResult
 
 logger = logging.getLogger(__name__)
 
@@ -36,131 +36,6 @@ def _signal_zsh_flush():
         pass
 
 
-class ZshHistoryCollector(BaseCollector):
-    """Reads new commands from ~/.zsh_history.
-
-    zsh EXTENDED_HISTORY format: `: <timestamp>:<duration>;<command>`
-    Plain format: just the command string.
-
-    NOTE: zsh only writes to history file when a session exits, unless
-    INC_APPEND_HISTORY or SHARE_HISTORY is set. We also try to force a
-    flush by sending SIGUSR1 to running zsh processes (which triggers
-    zsh to write history if SHARE_HISTORY is set).
-    """
-
-    event_type = "shell_command"
-    source = "zsh"
-
-    def __init__(self):
-        self._path = Path.home() / ".zsh_history"
-        self._last_size = 0
-        self._last_line_count = 0
-        self._flush_counter = 0
-
-    def available(self) -> bool:
-        return self._path.exists()
-
-    def collect(self) -> list[str]:
-        if not self._path.exists():
-            return []
-
-        try:
-            self._flush_counter += 1
-
-            # Every 10 cycles (~30s), signal zsh to flush history
-            if self._flush_counter % 10 == 0:
-                _signal_zsh_flush()
-
-            size = self._path.stat().st_size
-            if size == self._last_size:
-                # Every ~30 cycles (~90s), re-read anyway in case of rewrite
-                if self._flush_counter % 30 != 0:
-                    return []
-
-            with open(self._path, "rb") as f:
-                raw = f.read()
-
-            lines = raw.decode("utf-8", errors="replace").splitlines()
-            if self._last_line_count == 0:
-                # First run: just record position, don't dump entire history
-                self._last_line_count = len(lines)
-                self._last_size = size
-                logger.debug("zsh: initialized at %d lines", len(lines))
-                return []
-
-            if len(lines) <= self._last_line_count and size <= self._last_size:
-                return []
-
-            new_lines = lines[self._last_line_count:]
-            self._last_line_count = len(lines)
-            self._last_size = size
-
-            commands = []
-            for line in new_lines:
-                cmd = _parse_zsh_line(line)
-                if cmd and not _is_noise(cmd):
-                    commands.append(cmd)
-
-            if commands:
-                logger.debug("zsh: %d new commands", len(commands))
-            return commands
-
-        except Exception:
-            logger.exception("failed to read zsh history")
-            return []
-
-
-class BashHistoryCollector(BaseCollector):
-    """Reads new commands from ~/.bash_history."""
-
-    event_type = "shell_command"
-    source = "bash"
-
-    def __init__(self):
-        self._path = Path.home() / ".bash_history"
-        self._last_size = 0
-        self._last_line_count = 0
-
-    def available(self) -> bool:
-        return self._path.exists()
-
-    def collect(self) -> list[str]:
-        if not self._path.exists():
-            return []
-
-        try:
-            size = self._path.stat().st_size
-            if size <= self._last_size:
-                return []
-
-            with open(self._path, "r", errors="replace") as f:
-                lines = f.readlines()
-
-            if self._last_line_count == 0:
-                self._last_line_count = len(lines)
-                self._last_size = size
-                logger.debug("bash: initialized at %d lines", len(lines))
-                return []
-
-            new_lines = lines[self._last_line_count:]
-            self._last_line_count = len(lines)
-            self._last_size = size
-
-            commands = []
-            for line in new_lines:
-                cmd = line.strip()
-                if cmd and not _is_noise(cmd):
-                    commands.append(cmd)
-
-            if commands:
-                logger.debug("bash: %d new commands", len(commands))
-            return commands
-
-        except Exception:
-            logger.exception("failed to read bash history")
-            return []
-
-
 def _parse_zsh_line(line: str) -> str:
     """Parse a zsh history line. Handles both extended and plain format."""
     line = line.strip()
@@ -177,3 +52,176 @@ def _is_noise(cmd: str) -> bool:
     trivial = {"ls", "cd", "pwd", "clear", "exit", "history", "l", "ll", "la"}
     first_word = cmd.split()[0] if cmd.split() else ""
     return first_word in trivial
+
+
+class _HistoryFileTracker:
+    """Tracks a single history file for new lines."""
+
+    def __init__(self, path: Path, parser=None):
+        self.path = path
+        self._parser = parser or (lambda line: line.strip())
+        self._last_size = 0
+        self._last_line_count = 0
+
+    def collect_new(self) -> list[str]:
+        if not self.path.exists():
+            return []
+        try:
+            size = self.path.stat().st_size
+            if size <= self._last_size:
+                return []
+
+            with open(self.path, "rb") as f:
+                raw = f.read()
+            lines = raw.decode("utf-8", errors="replace").splitlines()
+
+            if self._last_line_count == 0:
+                self._last_line_count = len(lines)
+                self._last_size = size
+                return []
+
+            if len(lines) <= self._last_line_count:
+                return []
+
+            new_lines = lines[self._last_line_count:]
+            self._last_line_count = len(lines)
+            self._last_size = size
+
+            commands = []
+            for line in new_lines:
+                cmd = self._parser(line)
+                if cmd and not _is_noise(cmd):
+                    commands.append(cmd)
+            return commands
+        except Exception:
+            logger.exception("failed to read %s", self.path)
+            return []
+
+
+class ZshHistoryCollector(BaseCollector):
+    """Reads new commands from zsh history files.
+
+    Probes for:
+    - ~/.zsh_history (standard)
+    - ~/.zsh_sessions/*.historynew (Apple Terminal session files)
+    """
+
+    event_type = "shell_command"
+    source = "zsh"
+
+    def __init__(self, home: Path | None = None):
+        self._home = home or Path.home()
+        self._trackers: list[_HistoryFileTracker] = []
+        self._probed = False
+        self._flush_counter = 0
+
+    def probe(self) -> ProbeResult:
+        paths = []
+        warnings = []
+
+        # Standard ~/.zsh_history
+        standard = self._home / ".zsh_history"
+        if standard.exists():
+            paths.append(str(standard))
+            if standard.stat().st_size == 0:
+                warnings.append("~/.zsh_history is empty")
+
+        # Apple Terminal session files: ~/.zsh_sessions/*.historynew
+        sessions_dir = self._home / ".zsh_sessions"
+        if sessions_dir.is_dir():
+            active_sessions = list(sessions_dir.glob("*.historynew"))
+            for sf in active_sessions:
+                paths.append(str(sf))
+
+        if not paths:
+            return ProbeResult(
+                available=False,
+                source="zsh",
+                description="no history file found",
+                warnings=["checked ~/.zsh_history and ~/.zsh_sessions/"],
+            )
+
+        return ProbeResult(
+            available=True,
+            source="zsh",
+            description=f"found {len(paths)} history source(s)",
+            paths=paths,
+            warnings=warnings,
+        )
+
+    def _ensure_probed(self):
+        if self._probed:
+            return
+        result = self.probe()
+        for p in result.paths:
+            self._trackers.append(
+                _HistoryFileTracker(Path(p), parser=_parse_zsh_line)
+            )
+        self._probed = True
+
+    def collect(self) -> list[str]:
+        self._ensure_probed()
+
+        self._flush_counter += 1
+        if self._flush_counter % 10 == 0:
+            _signal_zsh_flush()
+
+        # Re-probe for new session files every 30 cycles (~90s)
+        if self._flush_counter % 30 == 0:
+            self._refresh_session_trackers()
+
+        commands = []
+        for tracker in self._trackers:
+            commands.extend(tracker.collect_new())
+        return commands
+
+    def _refresh_session_trackers(self):
+        """Check for new .historynew files that appeared since last probe."""
+        sessions_dir = self._home / ".zsh_sessions"
+        if not sessions_dir.is_dir():
+            return
+        tracked_paths = {t.path for t in self._trackers}
+        for sf in sessions_dir.glob("*.historynew"):
+            if sf not in tracked_paths:
+                self._trackers.append(
+                    _HistoryFileTracker(sf, parser=_parse_zsh_line)
+                )
+                logger.info("zsh: new session file discovered: %s", sf)
+
+
+class BashHistoryCollector(BaseCollector):
+    """Reads new commands from ~/.bash_history."""
+
+    event_type = "shell_command"
+    source = "bash"
+
+    def __init__(self, home: Path | None = None):
+        self._home = home or Path.home()
+        self._path = self._home / ".bash_history"
+        self._tracker: _HistoryFileTracker | None = None
+
+    def probe(self) -> ProbeResult:
+        if not self._path.exists():
+            return ProbeResult(
+                available=False,
+                source="bash",
+                description="no history file found",
+                warnings=["checked ~/.bash_history"],
+            )
+        warnings = []
+        if self._path.stat().st_size == 0:
+            warnings.append("~/.bash_history is empty")
+        return ProbeResult(
+            available=True,
+            source="bash",
+            description="found ~/.bash_history",
+            paths=[str(self._path)],
+            warnings=warnings,
+        )
+
+    def collect(self) -> list[str]:
+        if not self._path.exists():
+            return []
+        if self._tracker is None:
+            self._tracker = _HistoryFileTracker(self._path)
+        return self._tracker.collect_new()

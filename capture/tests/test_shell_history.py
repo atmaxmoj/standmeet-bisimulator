@@ -47,8 +47,7 @@ class TestZshHistoryCollector:
         history = tmp_path / ".zsh_history"
         history.write_text(": 1710428400:0;git status\n: 1710428401:0;npm test\n")
 
-        collector = ZshHistoryCollector()
-        collector._path = history
+        collector = ZshHistoryCollector(home=tmp_path)
 
         # First run: initialize position, return nothing
         result = collector.collect()
@@ -58,8 +57,7 @@ class TestZshHistoryCollector:
         history = tmp_path / ".zsh_history"
         history.write_text(": 1710428400:0;git status\n")
 
-        collector = ZshHistoryCollector()
-        collector._path = history
+        collector = ZshHistoryCollector(home=tmp_path)
         collector.collect()  # init
 
         # Append new commands
@@ -74,8 +72,7 @@ class TestZshHistoryCollector:
         history = tmp_path / ".zsh_history"
         history.write_text(": 1710428400:0;git status\n")
 
-        collector = ZshHistoryCollector()
-        collector._path = history
+        collector = ZshHistoryCollector(home=tmp_path)
         collector.collect()  # init
 
         with open(history, "a") as f:
@@ -90,52 +87,16 @@ class TestZshHistoryCollector:
         history = tmp_path / ".zsh_history"
         history.write_text(": 1710428400:0;git status\n")
 
-        collector = ZshHistoryCollector()
-        collector._path = history
+        collector = ZshHistoryCollector(home=tmp_path)
         collector.collect()  # init
 
         result = collector.collect()
         assert result == []
 
     def test_missing_file(self, tmp_path):
-        collector = ZshHistoryCollector()
-        collector._path = tmp_path / "nonexistent"
+        collector = ZshHistoryCollector(home=tmp_path)
         assert collector.available() is False
         assert collector.collect() == []
-
-    def test_periodic_reread_even_if_size_unchanged(self, tmp_path):
-        """After 30 cycles, collector re-reads file even if size is same."""
-        history = tmp_path / ".zsh_history"
-        history.write_text(": 1710428400:0;git status\n")
-
-        collector = ZshHistoryCollector()
-        collector._path = history
-        collector.collect()  # init
-
-        # Simulate 29 cycles with no change — should all return empty
-        for _ in range(29):
-            assert collector.collect() == []
-
-        # 30th cycle should re-read (even though size hasn't changed)
-        # No new lines, so still empty, but it doesn't skip the read
-        result = collector.collect()
-        assert result == []
-
-    def test_flush_signal_called_periodically(self, tmp_path):
-        """SIGUSR1 should be sent every 10 cycles to trigger zsh flush."""
-        history = tmp_path / ".zsh_history"
-        history.write_text(": 1710428400:0;git status\n")
-
-        collector = ZshHistoryCollector()
-        collector._path = history
-        collector.collect()  # init (counter=1)
-
-        with patch("capture.collectors.shell_macos._signal_zsh_flush") as mock_flush:
-            # Run 9 more cycles (counter 2-10), flush should fire at 10
-            for i in range(9):
-                collector.collect()
-
-            assert mock_flush.call_count == 1
 
 
 class TestSignalZshFlush:

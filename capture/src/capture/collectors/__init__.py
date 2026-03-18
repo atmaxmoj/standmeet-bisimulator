@@ -16,12 +16,13 @@ if sys.platform == "darwin":
         ]
 
 elif sys.platform == "win32":
-    from capture.collectors.shell_windows import PowerShellHistoryCollector
+    from capture.collectors.shell_windows import PowerShellHistoryCollector, GitBashHistoryCollector
     from capture.collectors.browser_windows import ChromeURLCollector as WinChromeURLCollector, EdgeURLCollector
 
     def get_all_collectors() -> list[BaseCollector]:
         return [
             PowerShellHistoryCollector(),
+            GitBashHistoryCollector(),
             WinChromeURLCollector(),
             EdgeURLCollector(),
         ]
