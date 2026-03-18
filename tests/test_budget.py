@@ -2,7 +2,8 @@
 
 import sqlite3
 import pytest
-from engine.pipeline.budget import check_daily_budget, get_daily_spend, get_budget_cap
+from engine.pipeline.budget import check_daily_budget
+from engine.storage.sync_db import SyncDB
 
 
 @pytest.fixture
@@ -85,7 +86,7 @@ class TestCheckDailyBudget:
 
 class TestGetDailySpend:
     def test_no_usage(self, conn):
-        assert get_daily_spend(conn) == 0.0
+        assert SyncDB(conn).get_daily_spend() == 0.0
 
     def test_sums_today(self, conn):
         conn.execute(
@@ -99,7 +100,7 @@ class TestGetDailySpend:
             ("opus", "distill", 200, 100, 1.25),
         )
         conn.commit()
-        assert get_daily_spend(conn) == pytest.approx(2.0)
+        assert SyncDB(conn).get_daily_spend() == pytest.approx(2.0)
 
     def test_excludes_old(self, conn):
         conn.execute(
@@ -113,19 +114,19 @@ class TestGetDailySpend:
             ("opus", "distill", 200, 100, 3.00),
         )
         conn.commit()
-        assert get_daily_spend(conn) == pytest.approx(0.50)
+        assert SyncDB(conn).get_daily_spend() == pytest.approx(0.50)
 
 
 class TestGetBudgetCap:
     def test_default_when_no_state(self, conn):
-        assert get_budget_cap(conn, default=2.0) == 2.0
+        assert SyncDB(conn).get_budget_cap(2.0) == 2.0
 
     def test_reads_from_state_table(self, conn):
         conn.execute(
             "INSERT INTO state (key, value) VALUES ('daily_cost_cap_usd', '5.0')"
         )
         conn.commit()
-        assert get_budget_cap(conn, default=2.0) == 5.0
+        assert SyncDB(conn).get_budget_cap(2.0) == 5.0
 
     def test_check_budget_uses_db_cap(self, conn):
         """check_daily_budget should use DB cap over the passed default."""

@@ -13,6 +13,7 @@ from engine.prompts.episode import EPISODE_PROMPT
 from engine.prompts.playbook import PLAYBOOK_PROMPT
 from engine.prompts.routine import ROUTINE_PROMPT
 from engine.llm.client import LLMClient
+from engine.storage.sync_db import SyncDB
 from engine.etl.collect import load_frames, store_episodes
 from engine.pipeline.stages.extract import build_context, parse_llm_json
 from engine.pipeline.stages.distill import format_episodes, format_playbooks
@@ -40,6 +41,7 @@ def run_episode(
     if not frames:
         return [], 0
 
+    db = SyncDB(conn)
     logger.info("run_episode: %d frames [%s -> %s]", len(frames), frames[0].timestamp, frames[-1].timestamp)
 
     prompt_text = prompt.format(context=build_context(frames))
@@ -58,16 +60,8 @@ def run_episode(
     store_episodes(conn, tasks, frames)
 
     cost = resp.cost_usd or 0
-    conn.execute(
-        "INSERT INTO token_usage (model, layer, input_tokens, output_tokens, cost_usd) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (MODEL_FAST, "episode", resp.input_tokens, resp.output_tokens, cost),
-    )
-    conn.execute(
-        "INSERT INTO pipeline_logs (stage, prompt, response, model, input_tokens, output_tokens, cost_usd) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        ("episode", prompt_text, resp.text, MODEL_FAST, resp.input_tokens, resp.output_tokens, cost),
-    )
+    db.record_usage(MODEL_FAST, "episode", resp.input_tokens, resp.output_tokens, cost)
+    db.insert_pipeline_log("episode", prompt_text, resp.text, MODEL_FAST, resp.input_tokens, resp.output_tokens, cost)
 
     logger.info("run_episode: created %d episodes, cost=$%.4f", len(tasks), cost)
     return tasks, len(tasks)
@@ -81,14 +75,10 @@ def run_distill(
 ) -> int:
     """Sync distill pipeline: read episodes → infer → store playbooks.
 
-    If agentic=True, uses multi-turn tool-use loop (LLM investigates data autonomously).
-    If agentic=False, uses one-shot prompt (backwards compat).
-
     Returns count of entries created/updated. Caller must conn.commit().
     """
-    episodes = conn.execute(
-        "SELECT * FROM episodes WHERE created_at >= datetime('now', '-1 days') ORDER BY created_at",
-    ).fetchall()
+    db = SyncDB(conn)
+    episodes = db.get_recent_episodes(days=1)
     if not episodes:
         logger.info("run_distill: no episodes, skipping")
         return 0
@@ -96,7 +86,7 @@ def run_distill(
     if agentic:
         return _run_distill_agentic(llm, conn)
 
-    return _run_distill_oneshot(llm, conn, episodes, prompt_template)
+    return _run_distill_oneshot(llm, conn, db, episodes, prompt_template)
 
 
 def _run_distill_agentic(llm: LLMClient, conn: sqlite3.Connection) -> int:
@@ -108,23 +98,18 @@ def _run_distill_agentic(llm: LLMClient, conn: sqlite3.Connection) -> int:
     mcp_server = create_distill_mcp_server(conn)
     run_agent_mcp(PLAYBOOK_AGENT_PROMPT, mcp_server, "distill", "distill_agentic", conn)
 
-    count = conn.execute(
-        "SELECT COUNT(*) FROM playbook_entries WHERE updated_at >= datetime('now', '-1 hours')",
-    ).fetchone()[0]
+    count = SyncDB(conn).count_recent_playbooks()
     logger.info("run_distill (agentic): %d entries", count)
     return count
 
 
-def _run_distill_oneshot(llm, conn, episodes, prompt_template) -> int:
+def _run_distill_oneshot(llm, conn, db: SyncDB, episodes, prompt_template) -> int:
     """One-shot distill: single prompt → JSON response."""
-    existing = conn.execute("SELECT * FROM playbook_entries ORDER BY confidence DESC").fetchall()
-
-    episodes_list = [dict(e) for e in episodes]
-    existing_list = [dict(e) for e in existing]
+    existing = db.get_all_playbooks()
 
     prompt = prompt_template.format(
-        playbooks=format_playbooks(existing_list),
-        episodes=format_episodes(episodes_list),
+        playbooks=format_playbooks(existing),
+        episodes=format_episodes(episodes),
     )
 
     last_resp = [None]
@@ -139,16 +124,8 @@ def _run_distill_oneshot(llm, conn, episodes, prompt_template) -> int:
     resp = last_resp[0]
 
     cost = resp.cost_usd or 0
-    conn.execute(
-        "INSERT INTO token_usage (model, layer, input_tokens, output_tokens, cost_usd) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (MODEL_DEEP, "distill", resp.input_tokens, resp.output_tokens, cost),
-    )
-    conn.execute(
-        "INSERT INTO pipeline_logs (stage, prompt, response, model, input_tokens, output_tokens, cost_usd) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        ("distill", prompt, resp.text, MODEL_DEEP, resp.input_tokens, resp.output_tokens, cost),
-    )
+    db.record_usage(MODEL_DEEP, "distill", resp.input_tokens, resp.output_tokens, cost)
+    db.insert_pipeline_log("distill", prompt, resp.text, MODEL_DEEP, resp.input_tokens, resp.output_tokens, cost)
 
     count = 0
     for entry in entries:
@@ -158,16 +135,13 @@ def _run_distill_oneshot(llm, conn, episodes, prompt_template) -> int:
             "why": entry.get("why", ""),
             "counterexample": entry.get("counterexample"),
         }, ensure_ascii=False)
-        conn.execute(
-            "INSERT INTO playbook_entries (name, context, action, confidence, maturity, evidence, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, datetime('now')) "
-            "ON CONFLICT(name) DO UPDATE SET "
-            "context=excluded.context, action=excluded.action, "
-            "confidence=excluded.confidence, maturity=excluded.maturity, "
-            "evidence=excluded.evidence, updated_at=datetime('now')",
-            (entry["name"], entry.get("context", ""), rich_action,
-             entry.get("confidence", 0.5), entry.get("maturity", "nascent"),
-             json.dumps(entry.get("evidence", []))),
+        db.upsert_playbook(
+            name=entry["name"],
+            context=entry.get("context", ""),
+            action=rich_action,
+            confidence=entry.get("confidence", 0.5),
+            maturity=entry.get("maturity", "nascent"),
+            evidence=json.dumps(entry.get("evidence", [])),
         )
         count += 1
 
@@ -183,14 +157,10 @@ def run_routines(
 ) -> int:
     """Sync routine pipeline: read episodes+playbooks → infer → store routines.
 
-    If agentic=True, uses Agent SDK MCP for multi-turn investigation.
-    If agentic=False, uses one-shot prompt.
-
     Returns count. Caller must conn.commit().
     """
-    episodes = conn.execute(
-        "SELECT * FROM episodes WHERE created_at >= datetime('now', '-1 days') ORDER BY created_at",
-    ).fetchall()
+    db = SyncDB(conn)
+    episodes = db.get_recent_episodes(days=1)
     if not episodes:
         logger.info("run_routines: no episodes, skipping")
         return 0
@@ -198,7 +168,7 @@ def run_routines(
     if agentic:
         return _run_compose_agentic(llm, conn)
 
-    return _run_routines_oneshot(llm, conn, episodes, prompt_template)
+    return _run_routines_oneshot(llm, conn, db, episodes, prompt_template)
 
 
 def _run_compose_agentic(llm: LLMClient, conn: sqlite3.Connection) -> int:
@@ -210,56 +180,39 @@ def _run_compose_agentic(llm: LLMClient, conn: sqlite3.Connection) -> int:
     mcp_server = create_compose_mcp_server(conn)
     run_agent_mcp(ROUTINE_AGENT_PROMPT, mcp_server, "compose", "compose_agentic", conn)
 
-    count = conn.execute(
-        "SELECT COUNT(*) FROM routines WHERE updated_at >= datetime('now', '-1 hours')",
-    ).fetchone()[0]
+    count = SyncDB(conn).count_recent_routines()
     logger.info("run_routines (agentic): %d routines", count)
     return count
 
 
-def _run_routines_oneshot(llm, conn, episodes, prompt_template) -> int:
+def _run_routines_oneshot(llm, conn, db: SyncDB, episodes, prompt_template) -> int:
     """One-shot routine composition: single prompt → JSON response."""
-    playbooks = conn.execute("SELECT * FROM playbook_entries ORDER BY confidence DESC").fetchall()
-    existing_routines = conn.execute("SELECT * FROM routines ORDER BY confidence DESC").fetchall()
-
-    episodes_list = [dict(e) for e in episodes]
-    playbooks_list = [dict(p) for p in playbooks]
-    routines_list = [dict(r) for r in existing_routines]
+    playbooks = db.get_all_playbooks()
+    existing_routines = db.get_all_routines()
 
     prompt = prompt_template.format(
-        playbooks=format_playbooks_for_routines(playbooks_list),
-        routines=format_routines(routines_list),
-        episodes=format_episodes_for_routines(episodes_list),
+        playbooks=format_playbooks_for_routines(playbooks),
+        routines=format_routines(existing_routines),
+        episodes=format_episodes_for_routines(episodes),
     )
 
     resp = llm.complete(prompt, MODEL_DEEP)
     cost = resp.cost_usd or 0
 
-    conn.execute(
-        "INSERT INTO token_usage (model, layer, input_tokens, output_tokens, cost_usd) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (MODEL_DEEP, "routines", resp.input_tokens, resp.output_tokens, cost),
-    )
-    conn.execute(
-        "INSERT INTO pipeline_logs (stage, prompt, response, model, input_tokens, output_tokens, cost_usd) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        ("routines", prompt, resp.text, MODEL_DEEP, resp.input_tokens, resp.output_tokens, cost),
-    )
+    db.record_usage(MODEL_DEEP, "routines", resp.input_tokens, resp.output_tokens, cost)
+    db.insert_pipeline_log("routines", prompt, resp.text, MODEL_DEEP, resp.input_tokens, resp.output_tokens, cost)
 
     entries = parse_llm_json(resp.text)
     count = 0
     for entry in entries:
-        conn.execute(
-            "INSERT INTO routines (name, trigger, goal, steps, uses, confidence, maturity, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now')) "
-            "ON CONFLICT(name) DO UPDATE SET "
-            "trigger=excluded.trigger, goal=excluded.goal, steps=excluded.steps, "
-            "uses=excluded.uses, confidence=excluded.confidence, maturity=excluded.maturity, "
-            "updated_at=datetime('now')",
-            (entry["name"], entry.get("trigger", ""), entry.get("goal", ""),
-             json.dumps(entry.get("steps", []), ensure_ascii=False),
-             json.dumps(entry.get("uses", []), ensure_ascii=False),
-             entry.get("confidence", 0.4), entry.get("maturity", "nascent")),
+        db.upsert_routine(
+            name=entry["name"],
+            trigger=entry.get("trigger", ""),
+            goal=entry.get("goal", ""),
+            steps=json.dumps(entry.get("steps", []), ensure_ascii=False),
+            uses=json.dumps(entry.get("uses", []), ensure_ascii=False),
+            confidence=entry.get("confidence", 0.4),
+            maturity=entry.get("maturity", "nascent"),
         )
         count += 1
 

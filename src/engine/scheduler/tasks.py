@@ -169,25 +169,8 @@ def _mark_processed(
     os_event_ids: set[int] | None = None,
 ):
     """Mark frames as processed in DB."""
-    if screen_ids:
-        placeholders = ",".join("?" * len(screen_ids))
-        conn.execute(
-            f"UPDATE frames SET processed = 1 WHERE id IN ({placeholders})",
-            list(screen_ids),
-        )
-    if audio_ids:
-        placeholders = ",".join("?" * len(audio_ids))
-        conn.execute(
-            f"UPDATE audio_frames SET processed = 1 WHERE id IN ({placeholders})",
-            list(audio_ids),
-        )
-    if os_event_ids:
-        placeholders = ",".join("?" * len(os_event_ids))
-        conn.execute(
-            f"UPDATE os_events SET processed = 1 WHERE id IN ({placeholders})",
-            list(os_event_ids),
-        )
-    conn.commit()
+    from engine.storage.sync_db import SyncDB
+    SyncDB(conn).mark_processed(screen_ids, audio_ids, os_event_ids)
 
 
 # -- Process a window: read full data from DB by IDs, call Haiku --
@@ -316,17 +299,11 @@ def daily_gc_task():
             resp = _llm.complete_with_tools(
                 GC_PROMPT, MODEL_DEEP, gc_tools, max_turns=10,
             )
+            from engine.storage.sync_db import SyncDB
             cost = resp.cost_usd or 0
-            conn.execute(
-                "INSERT INTO token_usage (model, layer, input_tokens, output_tokens, cost_usd) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (MODEL_DEEP, "gc", resp.input_tokens, resp.output_tokens, cost),
-            )
-            conn.execute(
-                "INSERT INTO pipeline_logs (stage, prompt, response, model, input_tokens, output_tokens, cost_usd) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                ("gc", GC_PROMPT, resp.text, MODEL_DEEP, resp.input_tokens, resp.output_tokens, cost),
-            )
+            db = SyncDB(conn)
+            db.record_usage(MODEL_DEEP, "gc", resp.input_tokens, resp.output_tokens, cost)
+            db.insert_pipeline_log("gc", GC_PROMPT, resp.text, MODEL_DEEP, resp.input_tokens, resp.output_tokens, cost)
             conn.commit()
             logger.info("daily_gc: agent audit complete, cost=$%.4f", cost)
         except NotImplementedError:

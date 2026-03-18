@@ -85,16 +85,10 @@ def run_agent_mcp(
     output_tokens = usage.get("output_tokens", 0)
     cost = cost_usd or 0
 
-    conn.execute(
-        "INSERT INTO token_usage (model, layer, input_tokens, output_tokens, cost_usd) "
-        "VALUES (?, ?, ?, ?, ?)",
-        (model, stage, input_tokens, output_tokens, cost),
-    )
-    conn.execute(
-        "INSERT INTO pipeline_logs (stage, prompt, response, model, input_tokens, output_tokens, cost_usd) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (stage, prompt, result_text[:5000], model, input_tokens, output_tokens, cost),
-    )
+    from engine.storage.sync_db import SyncDB
+    db = SyncDB(conn)
+    db.record_usage(model, stage, input_tokens, output_tokens, cost)
+    db.insert_pipeline_log(stage, prompt, result_text[:5000], model, input_tokens, output_tokens, cost)
 
     logger.info("%s: cost=$%.4f", stage, cost)
     return AgentResult(
