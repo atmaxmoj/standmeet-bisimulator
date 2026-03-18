@@ -50,7 +50,6 @@ def decay_confidence(conn: sqlite3.Connection) -> int:
         logger.debug("Decayed %s: %.4f → %.4f (%.0f days)", r["name"], original, new_confidence, days_since)
 
     if updated:
-        conn.commit()
         logger.info("Decayed confidence for %d entries", updated)
 
     return updated
