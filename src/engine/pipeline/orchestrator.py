@@ -200,8 +200,8 @@ def _run_routines_oneshot(llm, session, db: SyncDB, episodes, prompt_template) -
     resp = llm.complete(prompt, MODEL_DEEP)
     cost = resp.cost_usd or 0
 
-    db.record_usage(MODEL_DEEP, "routines", resp.input_tokens, resp.output_tokens, cost)
-    db.insert_pipeline_log("routines", prompt, resp.text, MODEL_DEEP, resp.input_tokens, resp.output_tokens, cost)
+    db.record_usage(MODEL_DEEP, "compose", resp.input_tokens, resp.output_tokens, cost)
+    db.insert_pipeline_log("compose", prompt, resp.text, MODEL_DEEP, resp.input_tokens, resp.output_tokens, cost)
 
     entries = parse_llm_json(resp.text)
     count = 0
