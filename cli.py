@@ -492,20 +492,22 @@ def cmd_experiment():
         print("==> No fixture found. Creating snapshot first...")
         run([sys.executable, str(experiments_dir / "snapshot.py")], cwd=ROOT)
 
-    # Copy fixtures + prompts into container
-    print("==> Copying fixtures + prompts into container...")
+    # Copy fixtures + prompts + runner into container
+    print("==> Copying experiments into container...")
     run(["docker", "compose", "exec", "-T", "engine",
-         "mkdir", "-p", "/app/tests/experiments"], cwd=ROOT)
+         "mkdir", "-p", "/app/tests/experiments", "/app/experiments"], cwd=ROOT)
     run(["docker", "compose", "cp",
          str(experiments_dir / "fixtures") + "/.", "engine:/app/tests/experiments/fixtures"], cwd=ROOT)
     run(["docker", "compose", "cp",
          str(experiments_dir / "prompts") + "/.", "engine:/app/tests/experiments/prompts"], cwd=ROOT)
+    run(["docker", "compose", "cp",
+         str(ROOT / "experiments") + "/.", "engine:/app/experiments"], cwd=ROOT)
 
     # Run experiment
     print("==> Running experiment...")
     run([
         "docker", "compose", "exec", "-T", "-u", "engine", "engine",
-        "uv", "run", "python", "-u", "-m", "engine.experiments.runner",
+        "uv", "run", "python", "-u", "/app/experiments/runner.py",
     ] + ([variant] if variant else []), cwd=ROOT)
 
     # Copy results out

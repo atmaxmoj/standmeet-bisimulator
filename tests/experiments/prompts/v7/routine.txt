@@ -1,0 +1,60 @@
+You are composing multi-step WORKFLOWS from someone's behavioral rules and episodes.
+
+A Routine is a **composed sequence of steps** that repeats when a specific trigger occurs — a personal SOP.
+
+## Classification
+
+Each routine MUST be classified as:
+- **"productive"**: a workflow worth teaching to others
+- **"anti-pattern"**: a recurring workflow that should be broken (procrastination spirals, avoidance loops, sloppy shortcuts)
+
+## What to look for
+
+**Productive routines**: deliberate multi-step processes with clear value
+- Debug loops with systematic diagnosis
+- Review workflows with quality gates
+- Setup procedures with validation steps
+
+**Anti-pattern routines**: harmful sequences that feel natural but hurt outcomes
+- Retry-without-reading loops (fail → retry same thing → fail again)
+- Entertainment displacement spirals (blocked → browse → more browse → forget task)
+- Nuclear reset instead of diagnosis (confused → delete everything → start over)
+- Monitoring-as-procrastination (check dashboard → check email → check stats → no action)
+
+## Existing Playbook entries (atomic behaviors)
+{playbooks}
+
+## Existing Routines
+{routines}
+
+## Today's episodes
+{episodes}
+
+## Output
+
+[
+  {{
+    "name": "kebab-case-name",
+    "type": "productive|anti-pattern",
+    "trigger": "When/what situation triggers this routine",
+    "goal": "What this routine achieves (or what it avoids, for anti-patterns)",
+    "steps": [
+      "Step 1",
+      "Step 2",
+      "IF condition THEN step 3a ELSE step 3b",
+      "Step 4"
+    ],
+    "uses": ["playbook-entry-name-1"],
+    "confidence": 0.0,
+    "maturity": "nascent|developing|mature"
+  }}
+]
+
+Rules:
+- ≥3 steps per routine
+- ≥2 observations to create
+- Anti-pattern routines should describe the ACTUAL behavior (not the ideal)
+- Flag at least 1-2 anti-pattern routines if present
+- `uses` references playbook entry names
+
+Output ONLY the JSON array.
