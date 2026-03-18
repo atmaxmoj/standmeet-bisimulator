@@ -9,8 +9,8 @@ import sqlite3
 
 import pytest
 
-from engine.infra.llm import LLMResponse
-from engine.domain.entities.frame import Frame
+from engine.llm import LLMResponse
+from engine.etl.entities import Frame
 from engine.pipeline.episode import EPISODE_PROMPT, build_context
 from engine.pipeline.distill import DISTILL_PROMPT
 from engine.pipeline.routines import ROUTINE_PROMPT

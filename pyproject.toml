@@ -42,10 +42,14 @@ name = "Engine layered architecture"
 type = "layers"
 layers = [
     "engine.api",
-    "engine.tasks",
+    "engine.scheduler",
     "engine.pipeline",
-    "engine.infra",
-    "engine.domain",
+    "engine.agents",
+    "engine.llm",
+    "engine.storage",
+    "engine.observability",
+    "engine.etl",
+    "engine.prompts",
     "engine.config",
 ]
 

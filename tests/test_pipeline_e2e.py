@@ -8,9 +8,9 @@ import json
 
 import pytest
 
-from engine.infra.db import DB
-from engine.infra.llm import LLMClient, LLMResponse
-from engine.domain.entities.frame import Frame
+from engine.storage.db import DB
+from engine.llm import LLMClient, LLMResponse
+from engine.etl.entities import Frame
 from engine.pipeline.episode import process_window
 from engine.pipeline.distill import daily_distill
 from engine.pipeline.routines import daily_routines

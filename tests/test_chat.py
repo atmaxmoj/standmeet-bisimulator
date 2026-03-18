@@ -5,9 +5,9 @@ import json
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from engine.infra.db import DB
+from engine.storage.db import DB
 from engine.api.chat import _read_tool, _handle_tool, _make_read_tools
-from engine.infra.llm import ContentBlock, MessageResponse, LLMClient, LLMResponse
+from engine.llm import ContentBlock, MessageResponse, LLMClient, LLMResponse
 
 
 @pytest.fixture(autouse=True)

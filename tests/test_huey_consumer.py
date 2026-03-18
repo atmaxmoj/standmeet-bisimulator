@@ -10,8 +10,8 @@ import time
 from datetime import datetime, timezone, timedelta
 
 
-from engine.domain.entities.frame import Frame
-from engine.pipeline.stages.filter import should_keep, detect_windows
+from engine.etl.entities import Frame
+from engine.etl.filter import should_keep, detect_windows
 
 
 class TestEmbeddedConsumer:
@@ -27,8 +27,8 @@ class TestEmbeddedConsumer:
         from huey import SqliteHuey
         from engine.main import _start_huey_consumer
 
-        # Patch engine.tasks.huey to use a temp DB
-        import engine.tasks as tasks_mod
+        # Patch engine.scheduler.tasks.huey to use a temp DB
+        import engine.scheduler.tasks as tasks_mod
         original_huey = tasks_mod.huey
         test_huey = SqliteHuey(filename=str(tmp_path / "huey_test.db"))
         monkeypatch.setattr(tasks_mod, "huey", test_huey)

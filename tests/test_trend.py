@@ -2,7 +2,7 @@
 
 import sqlite3
 import pytest
-from engine.pipeline.trend import get_playbook_history, get_stale_entries, get_similar_entries
+from engine.agents.tools.trend import get_playbook_history, get_stale_entries, get_similar_entries
 
 
 @pytest.fixture

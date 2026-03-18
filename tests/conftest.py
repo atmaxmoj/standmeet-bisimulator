@@ -4,7 +4,7 @@ import asyncio
 import pytest
 import pytest_asyncio
 
-from engine.infra.db import DB
+from engine.storage.db import DB
 
 
 @pytest.fixture(scope="session")

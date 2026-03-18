@@ -1,6 +1,6 @@
 """Tests for Frame dataclass."""
 
-from engine.domain.entities.frame import Frame
+from engine.etl.entities import Frame
 
 
 class TestFrame:

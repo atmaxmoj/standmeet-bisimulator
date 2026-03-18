@@ -26,7 +26,7 @@ def save_result(name: str, data: dict):
 
 
 def _setup_test_db(tmp_dir: str) -> sqlite3.Connection:
-    from engine.infra.db import SCHEMA
+    from engine.storage.db import SCHEMA
     conn = sqlite3.connect(f"{tmp_dir}/test.db")
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
@@ -85,7 +85,7 @@ def _setup_test_db(tmp_dir: str) -> sqlite3.Connection:
 def test_oauth_direct_with_distill_tools():
     """Test OAuth API with the actual distill tools — isolate the 400 error."""
     import anthropic
-    from engine.pipeline.stages.distill_tools import make_distill_tools
+    from engine.agents.tools.distill import make_distill_tools
 
     token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
     if not token:
@@ -142,7 +142,7 @@ def test_oauth_direct_with_distill_tools():
 def test_agentic_distill_uses_tools():
     """Full agentic distill — multi-turn tool loop."""
     from engine.config import Settings
-    from engine.infra.llm import create_client
+    from engine.llm import create_client
     from engine.pipeline.orchestrator import run_distill
 
     settings = Settings()

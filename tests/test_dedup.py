@@ -2,7 +2,7 @@
 
 import sqlite3
 import pytest
-from engine.pipeline.dedup import find_similar_pairs, merge_entries
+from engine.agents.tools.dedup import find_similar_pairs, merge_entries
 
 
 @pytest.fixture

@@ -296,8 +296,8 @@ Output a brief summary of what you did when finished."""
 def daily_gc_task():
     """Daily garbage collection: decay + agent-driven audit. Runs every day at 4am (after distill at 3am)."""
     from engine.pipeline.decay import decay_confidence
-    from engine.pipeline.dedup import make_dedup_tools
-    from engine.pipeline.audit import make_audit_tools
+    from engine.agents.tools.dedup import make_dedup_tools
+    from engine.agents.tools.audit import make_audit_tools
 
     conn = _get_conn()
     try:
