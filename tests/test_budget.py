@@ -1,154 +1,106 @@
 """Tests for daily budget checking."""
 
-import sqlite3
 import pytest
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
+from engine.storage.models import Base, TokenUsage, State
 from engine.pipeline.budget import check_daily_budget
 from engine.pipeline.repository import get_daily_spend, get_budget_cap
 
 
 @pytest.fixture
-def conn(tmp_path):
+def session(tmp_path):
     db_path = str(tmp_path / "test.db")
-    c = sqlite3.connect(db_path)
-    c.row_factory = sqlite3.Row
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS token_usage (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            model TEXT NOT NULL,
-            layer TEXT NOT NULL,
-            input_tokens INTEGER NOT NULL DEFAULT 0,
-            output_tokens INTEGER NOT NULL DEFAULT 0,
-            cost_usd REAL NOT NULL DEFAULT 0.0,
-            created_at TEXT NOT NULL DEFAULT (datetime('now'))
-        )
-    """)
-    c.execute("CREATE INDEX IF NOT EXISTS idx_token_usage_created_at ON token_usage(created_at)")
-    c.execute("CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-    c.commit()
-    yield c
-    c.close()
+    engine = create_engine(f"sqlite:///{db_path}")
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    s = Session()
+    yield s
+    s.close()
 
 
 class TestCheckDailyBudget:
-    def test_no_usage_passes(self, conn):
-        assert check_daily_budget(conn, cap_usd=2.0) is True
+    def test_no_usage_passes(self, session):
+        assert check_daily_budget(session, cap_usd=2.0) is True
 
-    def test_under_cap_passes(self, conn):
-        conn.execute(
-            "INSERT INTO token_usage (model, layer, input_tokens, output_tokens, cost_usd) "
-            "VALUES (?, ?, ?, ?, ?)",
-            ("haiku", "episode", 100, 50, 0.50),
-        )
-        conn.commit()
-        assert check_daily_budget(conn, cap_usd=2.0) is True
+    def test_under_cap_passes(self, session):
+        session.add(TokenUsage(model="haiku", layer="episode", input_tokens=100, output_tokens=50, cost_usd=0.50))
+        session.commit()
+        assert check_daily_budget(session, cap_usd=2.0) is True
 
-    def test_over_cap_rejected(self, conn):
-        conn.execute(
-            "INSERT INTO token_usage (model, layer, input_tokens, output_tokens, cost_usd) "
-            "VALUES (?, ?, ?, ?, ?)",
-            ("opus", "distill", 1000, 500, 2.50),
-        )
-        conn.commit()
-        assert check_daily_budget(conn, cap_usd=2.0) is False
+    def test_over_cap_rejected(self, session):
+        session.add(TokenUsage(model="opus", layer="distill", input_tokens=1000, output_tokens=500, cost_usd=2.50))
+        session.commit()
+        assert check_daily_budget(session, cap_usd=2.0) is False
 
-    def test_exactly_at_cap_rejected(self, conn):
-        conn.execute(
-            "INSERT INTO token_usage (model, layer, input_tokens, output_tokens, cost_usd) "
-            "VALUES (?, ?, ?, ?, ?)",
-            ("opus", "distill", 1000, 500, 2.00),
-        )
-        conn.commit()
-        assert check_daily_budget(conn, cap_usd=2.0) is False
+    def test_exactly_at_cap_rejected(self, session):
+        session.add(TokenUsage(model="opus", layer="distill", input_tokens=1000, output_tokens=500, cost_usd=2.00))
+        session.commit()
+        assert check_daily_budget(session, cap_usd=2.0) is False
 
-    def test_multiple_entries_sum(self, conn):
+    def test_multiple_entries_sum(self, session):
         for cost in [0.5, 0.6, 0.7]:
-            conn.execute(
-                "INSERT INTO token_usage (model, layer, input_tokens, output_tokens, cost_usd) "
-                "VALUES (?, ?, ?, ?, ?)",
-                ("haiku", "episode", 100, 50, cost),
-            )
-        conn.commit()
+            session.add(TokenUsage(model="haiku", layer="episode", input_tokens=100, output_tokens=50, cost_usd=cost))
+        session.commit()
         # Total = 1.8, under 2.0
-        assert check_daily_budget(conn, cap_usd=2.0) is True
+        assert check_daily_budget(session, cap_usd=2.0) is True
         # Total = 1.8, over 1.5
-        assert check_daily_budget(conn, cap_usd=1.5) is False
+        assert check_daily_budget(session, cap_usd=1.5) is False
 
-    def test_old_usage_not_counted(self, conn):
-        # Insert old record (2 days ago)
-        conn.execute(
-            "INSERT INTO token_usage (model, layer, input_tokens, output_tokens, cost_usd, created_at) "
-            "VALUES (?, ?, ?, ?, ?, datetime('now', '-2 days'))",
-            ("opus", "distill", 1000, 500, 5.00),
+    def test_old_usage_not_counted(self, session):
+        # Insert old record (2 days ago) using raw SQL for datetime manipulation
+        session.execute(
+            text("INSERT INTO token_usage (model, layer, input_tokens, output_tokens, cost_usd, created_at) "
+                 "VALUES (:model, :layer, :input_tokens, :output_tokens, :cost_usd, datetime('now', '-2 days'))"),
+            {"model": "opus", "layer": "distill", "input_tokens": 1000, "output_tokens": 500, "cost_usd": 5.00},
         )
-        conn.commit()
-        assert check_daily_budget(conn, cap_usd=2.0) is True
+        session.commit()
+        assert check_daily_budget(session, cap_usd=2.0) is True
 
 
 class TestGetDailySpend:
-    def test_no_usage(self, conn):
-        assert get_daily_spend(conn) == 0.0
+    def test_no_usage(self, session):
+        assert get_daily_spend(session) == 0.0
 
-    def test_sums_today(self, conn):
-        conn.execute(
-            "INSERT INTO token_usage (model, layer, input_tokens, output_tokens, cost_usd) "
-            "VALUES (?, ?, ?, ?, ?)",
-            ("haiku", "episode", 100, 50, 0.75),
-        )
-        conn.execute(
-            "INSERT INTO token_usage (model, layer, input_tokens, output_tokens, cost_usd) "
-            "VALUES (?, ?, ?, ?, ?)",
-            ("opus", "distill", 200, 100, 1.25),
-        )
-        conn.commit()
-        assert get_daily_spend(conn) == pytest.approx(2.0)
+    def test_sums_today(self, session):
+        session.add(TokenUsage(model="haiku", layer="episode", input_tokens=100, output_tokens=50, cost_usd=0.75))
+        session.add(TokenUsage(model="opus", layer="distill", input_tokens=200, output_tokens=100, cost_usd=1.25))
+        session.commit()
+        assert get_daily_spend(session) == pytest.approx(2.0)
 
-    def test_excludes_old(self, conn):
-        conn.execute(
-            "INSERT INTO token_usage (model, layer, input_tokens, output_tokens, cost_usd) "
-            "VALUES (?, ?, ?, ?, ?)",
-            ("haiku", "episode", 100, 50, 0.50),
+    def test_excludes_old(self, session):
+        session.add(TokenUsage(model="haiku", layer="episode", input_tokens=100, output_tokens=50, cost_usd=0.50))
+        session.execute(
+            text("INSERT INTO token_usage (model, layer, input_tokens, output_tokens, cost_usd, created_at) "
+                 "VALUES (:model, :layer, :input_tokens, :output_tokens, :cost_usd, datetime('now', '-2 days'))"),
+            {"model": "opus", "layer": "distill", "input_tokens": 200, "output_tokens": 100, "cost_usd": 3.00},
         )
-        conn.execute(
-            "INSERT INTO token_usage (model, layer, input_tokens, output_tokens, cost_usd, created_at) "
-            "VALUES (?, ?, ?, ?, ?, datetime('now', '-2 days'))",
-            ("opus", "distill", 200, 100, 3.00),
-        )
-        conn.commit()
-        assert get_daily_spend(conn) == pytest.approx(0.50)
+        session.commit()
+        assert get_daily_spend(session) == pytest.approx(0.50)
 
 
 class TestGetBudgetCap:
-    def test_default_when_no_state(self, conn):
-        assert get_budget_cap(conn, 2.0) == 2.0
+    def test_default_when_no_state(self, session):
+        assert get_budget_cap(session, 2.0) == 2.0
 
-    def test_reads_from_state_table(self, conn):
-        conn.execute(
-            "INSERT INTO state (key, value) VALUES ('daily_cost_cap_usd', '5.0')"
-        )
-        conn.commit()
-        assert get_budget_cap(conn, 2.0) == 5.0
+    def test_reads_from_state_table(self, session):
+        session.add(State(key="daily_cost_cap_usd", value="5.0"))
+        session.commit()
+        assert get_budget_cap(session, 2.0) == 5.0
 
-    def test_check_budget_uses_db_cap(self, conn):
+    def test_check_budget_uses_db_cap(self, session):
         """check_daily_budget should use DB cap over the passed default."""
-        conn.execute(
-            "INSERT INTO state (key, value) VALUES ('daily_cost_cap_usd', '10.0')"
-        )
-        conn.execute(
-            "INSERT INTO token_usage (model, layer, input_tokens, output_tokens, cost_usd) "
-            "VALUES ('opus', 'distill', 1000, 500, 5.0)",
-        )
-        conn.commit()
+        session.add(State(key="daily_cost_cap_usd", value="10.0"))
+        session.add(TokenUsage(model="opus", layer="distill", input_tokens=1000, output_tokens=500, cost_usd=5.0))
+        session.commit()
         # Default cap=2.0 would reject, but DB cap=10.0 allows
-        assert check_daily_budget(conn, cap_usd=2.0) is True
+        assert check_daily_budget(session, cap_usd=2.0) is True
 
-    def test_check_budget_falls_back_to_default(self, conn):
-        """No DB state → use passed default."""
-        conn.execute(
-            "INSERT INTO token_usage (model, layer, input_tokens, output_tokens, cost_usd) "
-            "VALUES ('opus', 'distill', 1000, 500, 5.0)",
-        )
-        conn.commit()
-        assert check_daily_budget(conn, cap_usd=2.0) is False
+    def test_check_budget_falls_back_to_default(self, session):
+        """No DB state -> use passed default."""
+        session.add(TokenUsage(model="opus", layer="distill", input_tokens=1000, output_tokens=500, cost_usd=5.0))
+        session.commit()
+        assert check_daily_budget(session, cap_usd=2.0) is False
 
 
 class TestSyncDBWithPsycopgConn:

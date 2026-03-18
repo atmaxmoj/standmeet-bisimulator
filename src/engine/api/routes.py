@@ -366,69 +366,61 @@ async def backfill(request: Request):
     This reads ALL frames, runs detect_windows (ignoring recency),
     and enqueues process_episode for each window.
     """
-    import sqlite3
+    from sqlalchemy import select, update
     from engine.config import Settings
     from engine.etl.entities import Frame
     from engine.etl.filter import should_keep, detect_windows
     from engine.scheduler.tasks import process_episode
+    from engine.storage.engine import get_sync_session_factory
+    from engine.storage.models import Frame as FrameModel, AudioFrame, OsEvent
 
     settings = Settings()
-    url = settings.database_url_sync
-    if "sqlite" in url:
-        path = url.split("///", 1)[-1]
-        conn = sqlite3.connect(path)
-        conn.row_factory = sqlite3.Row
-    else:
-        from sqlalchemy import create_engine
-        engine = create_engine(url)
-        conn = engine.raw_connection()
+    factory = get_sync_session_factory(settings.database_url_sync)
+    session = factory()
 
     # Reset all to unprocessed
-    conn.execute("UPDATE frames SET processed = 0")
-    conn.execute("UPDATE audio_frames SET processed = 0")
-    conn.execute("UPDATE os_events SET processed = 0")
-    conn.commit()
+    session.execute(update(FrameModel).values(processed=0))
+    session.execute(update(AudioFrame).values(processed=0))
+    session.execute(update(OsEvent).values(processed=0))
+    session.commit()
 
     # Read ALL data sources
-    screen_rows = conn.execute(
-        "SELECT id, timestamp, app_name, window_name, text, image_path "
-        "FROM frames ORDER BY timestamp",
-    ).fetchall()
+    screen_rows = session.execute(
+        select(FrameModel).order_by(FrameModel.timestamp)
+    ).scalars().all()
     screen_frames = [
         Frame(
-            id=r["id"], source="capture",
-            text=r["text"] or "", app_name=r["app_name"] or "",
-            window_name=r["window_name"] or "",
-            timestamp=r["timestamp"] or "",
-            image_path=r["image_path"] or "",
+            id=r.id, source="capture",
+            text=r.text or "", app_name=r.app_name or "",
+            window_name=r.window_name or "",
+            timestamp=r.timestamp or "",
+            image_path=r.image_path or "",
         )
         for r in screen_rows
     ]
 
-    audio_rows = conn.execute(
-        "SELECT id, timestamp, text, language "
-        "FROM audio_frames ORDER BY timestamp",
-    ).fetchall()
+    audio_rows = session.execute(
+        select(AudioFrame).order_by(AudioFrame.timestamp)
+    ).scalars().all()
     audio_frames = [
         Frame(
-            id=r["id"], source="audio",
-            text=r["text"] or "", app_name="microphone",
-            window_name=f"audio/{r['language'] or 'unknown'}",
-            timestamp=r["timestamp"] or "",
+            id=r.id, source="audio",
+            text=r.text or "", app_name="microphone",
+            window_name=f"audio/{r.language or 'unknown'}",
+            timestamp=r.timestamp or "",
         )
         for r in audio_rows
     ]
 
-    os_rows = conn.execute(
-        "SELECT id, timestamp, event_type, source, data "
-        "FROM os_events ORDER BY timestamp",
-    ).fetchall()
+    os_rows = session.execute(
+        select(OsEvent).order_by(OsEvent.timestamp)
+    ).scalars().all()
     os_event_frames = [
         Frame(
-            id=r["id"], source="os_event",
-            text=r["data"] or "", app_name=r["event_type"] or "",
-            window_name=r["source"] or "",
-            timestamp=r["timestamp"] or "",
+            id=r.id, source="os_event",
+            text=r.data or "", app_name=r.event_type or "",
+            window_name=r.source or "",
+            timestamp=r.timestamp or "",
         )
         for r in os_rows
     ]
@@ -440,11 +432,11 @@ async def backfill(request: Request):
     )
 
     if not kept:
-        conn.execute("UPDATE frames SET processed = 1")
-        conn.execute("UPDATE audio_frames SET processed = 1")
-        conn.execute("UPDATE os_events SET processed = 1")
-        conn.commit()
-        conn.close()
+        session.execute(update(FrameModel).values(processed=1))
+        session.execute(update(AudioFrame).values(processed=1))
+        session.execute(update(OsEvent).values(processed=1))
+        session.commit()
+        session.close()
         return {"windows": 0, "message": "All frames filtered as noise"}
 
     # Use normal idle threshold, but force-close the last group
@@ -463,11 +455,11 @@ async def backfill(request: Request):
         enqueued += 1
 
     # Mark all as processed
-    conn.execute("UPDATE frames SET processed = 1")
-    conn.execute("UPDATE audio_frames SET processed = 1")
-    conn.execute("UPDATE os_events SET processed = 1")
-    conn.commit()
-    conn.close()
+    session.execute(update(FrameModel).values(processed=1))
+    session.execute(update(AudioFrame).values(processed=1))
+    session.execute(update(OsEvent).values(processed=1))
+    session.commit()
+    session.close()
 
     logger.info("backfill: enqueued %d windows from %d frames", enqueued, len(all_raw))
     return {

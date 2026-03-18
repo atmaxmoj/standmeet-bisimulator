@@ -1,12 +1,13 @@
 """Pipeline orchestrator — shared logic for sync and async callers.
 
-Each function takes explicit dependencies (llm, conn/db, prompt).
+Each function takes explicit dependencies (llm, session/db, prompt).
 No module-level state, no side effects beyond what's passed in.
 """
 
 import json
 import logging
-import sqlite3
+
+from sqlalchemy.orm import Session
 
 from engine.config import MODEL_FAST, MODEL_DEEP
 from engine.prompts.episode import EPISODE_PROMPT
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 def run_episode(
     llm: LLMClient,
-    conn: sqlite3.Connection,
+    session: Session,
     screen_ids: list[int],
     audio_ids: list[int],
     os_event_ids: list[int] | None = None,
@@ -35,13 +36,13 @@ def run_episode(
 ) -> tuple[list[dict], int]:
     """Sync episode pipeline: load → build → infer → validate → store.
 
-    Returns (tasks, episode_count). Caller must conn.commit().
+    Returns (tasks, episode_count). Caller must session.commit().
     """
-    frames = load_frames(conn, screen_ids, audio_ids, os_event_ids)
+    frames = load_frames(session, screen_ids, audio_ids, os_event_ids)
     if not frames:
         return [], 0
 
-    db = SyncDB(conn)
+    db = SyncDB(session)
     logger.info("run_episode: %d frames [%s -> %s]", len(frames), frames[0].timestamp, frames[-1].timestamp)
 
     prompt_text = prompt.format(context=build_context(frames))
@@ -57,7 +58,7 @@ def run_episode(
     tasks = with_retry(_call_llm, validate_episodes, max_retries=1)
     resp = last_resp[0]
 
-    store_episodes(conn, tasks, frames)
+    store_episodes(session, tasks, frames)
 
     cost = resp.cost_usd or 0
     db.record_usage(MODEL_FAST, "episode", resp.input_tokens, resp.output_tokens, cost)
@@ -69,41 +70,41 @@ def run_episode(
 
 def run_distill(
     llm: LLMClient,
-    conn: sqlite3.Connection,
+    session: Session,
     prompt_template: str = PLAYBOOK_PROMPT,
     agentic: bool = False,
 ) -> int:
     """Sync distill pipeline: read episodes → infer → store playbooks.
 
-    Returns count of entries created/updated. Caller must conn.commit().
+    Returns count of entries created/updated. Caller must session.commit().
     """
-    db = SyncDB(conn)
+    db = SyncDB(session)
     episodes = db.get_recent_episodes(days=1)
     if not episodes:
         logger.info("run_distill: no episodes, skipping")
         return 0
 
     if agentic:
-        return _run_distill_agentic(llm, conn)
+        return _run_distill_agentic(llm, session)
 
-    return _run_distill_oneshot(llm, conn, db, episodes, prompt_template)
+    return _run_distill_oneshot(llm, session, db, episodes, prompt_template)
 
 
-def _run_distill_agentic(llm: LLMClient, conn: sqlite3.Connection) -> int:
+def _run_distill_agentic(llm: LLMClient, session: Session) -> int:
     """Agentic distill: Agent SDK + MCP tools to investigate episodes and write playbook entries."""
     from engine.prompts.playbook_agent import PLAYBOOK_AGENT_PROMPT
     from engine.agents.tools.distill_mcp import create_distill_mcp_server
     from engine.agents.service import run_agent_mcp
 
-    mcp_server = create_distill_mcp_server(conn)
-    run_agent_mcp(PLAYBOOK_AGENT_PROMPT, mcp_server, "distill", "distill_agentic", conn)
+    mcp_server = create_distill_mcp_server(session)
+    run_agent_mcp(PLAYBOOK_AGENT_PROMPT, mcp_server, "distill", "distill_agentic", session)
 
-    count = SyncDB(conn).count_recent_playbooks()
+    count = SyncDB(session).count_recent_playbooks()
     logger.info("run_distill (agentic): %d entries", count)
     return count
 
 
-def _run_distill_oneshot(llm, conn, db: SyncDB, episodes, prompt_template) -> int:
+def _run_distill_oneshot(llm, session, db: SyncDB, episodes, prompt_template) -> int:
     """One-shot distill: single prompt → JSON response."""
     existing = db.get_all_playbooks()
 
@@ -151,41 +152,41 @@ def _run_distill_oneshot(llm, conn, db: SyncDB, episodes, prompt_template) -> in
 
 def run_routines(
     llm: LLMClient,
-    conn: sqlite3.Connection,
+    session: Session,
     prompt_template: str = ROUTINE_PROMPT,
     agentic: bool = False,
 ) -> int:
     """Sync routine pipeline: read episodes+playbooks → infer → store routines.
 
-    Returns count. Caller must conn.commit().
+    Returns count. Caller must session.commit().
     """
-    db = SyncDB(conn)
+    db = SyncDB(session)
     episodes = db.get_recent_episodes(days=1)
     if not episodes:
         logger.info("run_routines: no episodes, skipping")
         return 0
 
     if agentic:
-        return _run_compose_agentic(llm, conn)
+        return _run_compose_agentic(llm, session)
 
-    return _run_routines_oneshot(llm, conn, db, episodes, prompt_template)
+    return _run_routines_oneshot(llm, session, db, episodes, prompt_template)
 
 
-def _run_compose_agentic(llm: LLMClient, conn: sqlite3.Connection) -> int:
+def _run_compose_agentic(llm: LLMClient, session: Session) -> int:
     """Agentic routine composition: Agent SDK + MCP tools to investigate and write routines."""
     from engine.prompts.compose_agent import ROUTINE_AGENT_PROMPT
     from engine.agents.tools.compose_mcp import create_compose_mcp_server
     from engine.agents.service import run_agent_mcp
 
-    mcp_server = create_compose_mcp_server(conn)
-    run_agent_mcp(ROUTINE_AGENT_PROMPT, mcp_server, "compose", "compose_agentic", conn)
+    mcp_server = create_compose_mcp_server(session)
+    run_agent_mcp(ROUTINE_AGENT_PROMPT, mcp_server, "compose", "compose_agentic", session)
 
-    count = SyncDB(conn).count_recent_routines()
+    count = SyncDB(session).count_recent_routines()
     logger.info("run_routines (agentic): %d routines", count)
     return count
 
 
-def _run_routines_oneshot(llm, conn, db: SyncDB, episodes, prompt_template) -> int:
+def _run_routines_oneshot(llm, session, db: SyncDB, episodes, prompt_template) -> int:
     """One-shot routine composition: single prompt → JSON response."""
     playbooks = db.get_all_playbooks()
     existing_routines = db.get_all_routines()

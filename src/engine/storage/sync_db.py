@@ -20,24 +20,13 @@ logger = logging.getLogger(__name__)
 class SyncDB:
     """Sync repository wrapping a SQLAlchemy Session.
 
-    Accepts either a SQLAlchemy Session or a raw sqlite3.Connection
-    (for backwards compatibility during migration).
+    Accepts a SQLAlchemy Session or falls back to get_session for other inputs.
     """
 
     def __init__(self, session_or_conn):
-        import sqlite3
         if isinstance(session_or_conn, Session):
             self.session = session_or_conn
             self._owns_session = False
-        elif isinstance(session_or_conn, sqlite3.Connection):
-            # SQLite: wrap raw connection in a session
-            from sqlalchemy import create_engine
-            from sqlalchemy.orm import sessionmaker
-            from engine.storage.models import Base
-            engine = create_engine("sqlite://", creator=lambda: session_or_conn)
-            Base.metadata.create_all(engine)
-            self.session = sessionmaker(bind=engine)()
-            self._owns_session = True
         else:
             # Other DBAPI connections (psycopg, etc.): use get_session
             from engine.storage.session import get_session

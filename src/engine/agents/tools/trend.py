@@ -1,13 +1,13 @@
 """Playbook trend query tools for the distill agent."""
 
-import sqlite3
+from sqlalchemy.orm import Session
 
 from engine.llm.types import ToolDef
 from engine.agents import repository as repo
 
 
-def make_trend_tools(conn: sqlite3.Connection) -> list[ToolDef]:
-    """Create trend tool definitions bound to a DB connection."""
+def make_trend_tools(session: Session) -> list[ToolDef]:
+    """Create trend tool definitions bound to a DB session."""
     return [
         ToolDef(
             name="get_playbook_history",
@@ -17,7 +17,7 @@ def make_trend_tools(conn: sqlite3.Connection) -> list[ToolDef]:
                 "properties": {"name": {"type": "string", "description": "Playbook entry name (kebab-case)"}},
                 "required": ["name"],
             },
-            handler=lambda name: repo.get_playbook_history(conn, name),
+            handler=lambda name: repo.get_playbook_history(session, name),
         ),
         ToolDef(
             name="get_stale_entries",
@@ -27,7 +27,7 @@ def make_trend_tools(conn: sqlite3.Connection) -> list[ToolDef]:
                 "properties": {"days": {"type": "integer", "default": 14}},
                 "required": [],
             },
-            handler=lambda days=14: repo.get_stale_entries(conn, days),
+            handler=lambda days=14: repo.get_stale_entries(session, days),
         ),
         ToolDef(
             name="get_similar_entries",
@@ -37,6 +37,6 @@ def make_trend_tools(conn: sqlite3.Connection) -> list[ToolDef]:
                 "properties": {"name": {"type": "string"}},
                 "required": ["name"],
             },
-            handler=lambda name: repo.get_similar_entries(conn, name),
+            handler=lambda name: repo.get_similar_entries(session, name),
         ),
     ]

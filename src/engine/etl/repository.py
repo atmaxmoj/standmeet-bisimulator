@@ -1,20 +1,18 @@
 """ETL data access — frame loading, episode storage."""
 
 import json
-import sqlite3
 
 from sqlalchemy import select, update
+from sqlalchemy.orm import Session
 
-from engine.storage.session import get_session
 from engine.storage.models import Frame as FrameModel, AudioFrame, OsEvent, Episode
 from engine.etl.entities import Frame
 
 
-def load_unprocessed_frames(conn: sqlite3.Connection) -> tuple[list[Frame], list[Frame], list[Frame]]:
+def load_unprocessed_frames(session: Session) -> tuple[list[Frame], list[Frame], list[Frame]]:
     """Load unprocessed screen/audio/os frames. Returns (screen, audio, os)."""
-    s = get_session(conn)
 
-    screen_rows = s.execute(
+    screen_rows = session.execute(
         select(FrameModel).where(FrameModel.processed == 0)
         .order_by(FrameModel.timestamp).limit(500)
     ).scalars().all()
@@ -25,7 +23,7 @@ def load_unprocessed_frames(conn: sqlite3.Connection) -> tuple[list[Frame], list
         for r in screen_rows
     ]
 
-    audio_rows = s.execute(
+    audio_rows = session.execute(
         select(AudioFrame).where(AudioFrame.processed == 0)
         .order_by(AudioFrame.timestamp).limit(100)
     ).scalars().all()
@@ -35,7 +33,7 @@ def load_unprocessed_frames(conn: sqlite3.Connection) -> tuple[list[Frame], list
         for r in audio_rows
     ]
 
-    os_rows = s.execute(
+    os_rows = session.execute(
         select(OsEvent).where(OsEvent.processed == 0)
         .order_by(OsEvent.timestamp).limit(200)
     ).scalars().all()
@@ -45,40 +43,36 @@ def load_unprocessed_frames(conn: sqlite3.Connection) -> tuple[list[Frame], list
         for r in os_rows
     ]
 
-    s.close()
     return screen, audio, os_frames
 
 
 def mark_processed(
-    conn: sqlite3.Connection,
+    session: Session,
     screen_ids: set[int],
     audio_ids: set[int],
     os_event_ids: set[int] | None = None,
 ):
     """Mark frames as processed."""
-    s = get_session(conn)
     if screen_ids:
-        s.execute(update(FrameModel).where(FrameModel.id.in_(screen_ids)).values(processed=1))
+        session.execute(update(FrameModel).where(FrameModel.id.in_(screen_ids)).values(processed=1))
     if audio_ids:
-        s.execute(update(AudioFrame).where(AudioFrame.id.in_(audio_ids)).values(processed=1))
+        session.execute(update(AudioFrame).where(AudioFrame.id.in_(audio_ids)).values(processed=1))
     if os_event_ids:
-        s.execute(update(OsEvent).where(OsEvent.id.in_(os_event_ids)).values(processed=1))
-    s.commit()
-    s.close()
+        session.execute(update(OsEvent).where(OsEvent.id.in_(os_event_ids)).values(processed=1))
+    session.commit()
 
 
 def load_frames(
-    conn: sqlite3.Connection,
+    session: Session,
     screen_ids: list[int],
     audio_ids: list[int],
     os_event_ids: list[int] | None = None,
 ) -> list[Frame]:
     """Load full frame data from DB by IDs. Returns sorted by timestamp."""
-    s = get_session(conn)
     frames: list[Frame] = []
 
     if screen_ids:
-        rows = s.execute(
+        rows = session.execute(
             select(FrameModel).where(FrameModel.id.in_(screen_ids)).order_by(FrameModel.timestamp)
         ).scalars().all()
         frames.extend(
@@ -89,7 +83,7 @@ def load_frames(
         )
 
     if audio_ids:
-        rows = s.execute(
+        rows = session.execute(
             select(AudioFrame).where(AudioFrame.id.in_(audio_ids)).order_by(AudioFrame.timestamp)
         ).scalars().all()
         frames.extend(
@@ -99,7 +93,7 @@ def load_frames(
         )
 
     if os_event_ids:
-        rows = s.execute(
+        rows = session.execute(
             select(OsEvent).where(OsEvent.id.in_(os_event_ids)).order_by(OsEvent.timestamp)
         ).scalars().all()
         frames.extend(
@@ -109,17 +103,15 @@ def load_frames(
         )
 
     frames.sort(key=lambda f: f.timestamp)
-    s.close()
     return frames
 
 
 def store_episodes(
-    conn: sqlite3.Connection,
+    session: Session,
     tasks: list[dict],
     frames: list[Frame],
 ):
     """Write parsed episode dicts to DB."""
-    s = get_session(conn)
     frame_id_min = min(f.id for f in frames)
     frame_id_max = max(f.id for f in frames)
     frame_source = ",".join(sorted({f.source for f in frames}))
@@ -133,7 +125,7 @@ def store_episodes(
             "under_pressure": task.get("under_pressure", False),
         }, ensure_ascii=False)
 
-        s.add(Episode(
+        session.add(Episode(
             summary=summary,
             app_names=json.dumps(task.get("apps", [])),
             frame_count=len(frames),
@@ -143,5 +135,4 @@ def store_episodes(
             frame_id_max=frame_id_max,
             frame_source=frame_source,
         ))
-    s.flush()
-    s.close()
+    session.flush()

@@ -6,10 +6,10 @@ Shared agentic loop used by distill and compose pipelines.
 import asyncio
 import logging
 import os
-import sqlite3
 from dataclasses import dataclass
 
 from mcp.server.fastmcp import FastMCP
+from sqlalchemy.orm import Session
 
 from engine.config import MODEL_DEEP
 
@@ -30,7 +30,7 @@ def run_agent_mcp(
     mcp_server: FastMCP,
     mcp_name: str,
     stage: str,
-    conn: sqlite3.Connection,
+    session: Session,
     model: str = MODEL_DEEP,
     max_turns: int = 15,
 ) -> AgentResult:
@@ -86,7 +86,7 @@ def run_agent_mcp(
     cost = cost_usd or 0
 
     from engine.storage.sync_db import SyncDB
-    db = SyncDB(conn)
+    db = SyncDB(session)
     db.record_usage(model, stage, input_tokens, output_tokens, cost)
     db.insert_pipeline_log(stage, prompt, result_text[:5000], model, input_tokens, output_tokens, cost)
 

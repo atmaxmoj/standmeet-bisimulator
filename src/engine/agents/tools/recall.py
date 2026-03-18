@@ -4,14 +4,14 @@ Layer 1 (context engineering): gives agents tools to search episode history
 and raw capture data.
 """
 
-import sqlite3
+from sqlalchemy.orm import Session
 
 from engine.llm.types import ToolDef
 from engine.agents import repository as repo
 
 
-def make_recall_tools(conn: sqlite3.Connection) -> list[ToolDef]:
-    """Create recall tool definitions bound to a DB connection."""
+def make_recall_tools(session: Session) -> list[ToolDef]:
+    """Create recall tool definitions bound to a DB session."""
     return [
         ToolDef(
             name="search_episodes",
@@ -24,7 +24,7 @@ def make_recall_tools(conn: sqlite3.Connection) -> list[ToolDef]:
                 },
                 "required": ["query"],
             },
-            handler=lambda query, limit=10: repo.search_episodes(conn, query, limit),
+            handler=lambda query, limit=10: repo.search_episodes(session, query, limit),
         ),
         ToolDef(
             name="get_recent_episodes",
@@ -36,7 +36,7 @@ def make_recall_tools(conn: sqlite3.Connection) -> list[ToolDef]:
                 },
                 "required": [],
             },
-            handler=lambda hours=24: repo.get_recent_episodes(conn, hours),
+            handler=lambda hours=24: repo.get_recent_episodes(session, hours),
         ),
         ToolDef(
             name="get_episodes_by_app",
@@ -48,7 +48,7 @@ def make_recall_tools(conn: sqlite3.Connection) -> list[ToolDef]:
                 },
                 "required": ["app_name"],
             },
-            handler=lambda app_name: repo.get_episodes_by_app(conn, app_name),
+            handler=lambda app_name: repo.get_episodes_by_app(session, app_name),
         ),
         ToolDef(
             name="get_recent_frames",
@@ -61,7 +61,7 @@ def make_recall_tools(conn: sqlite3.Connection) -> list[ToolDef]:
                 },
                 "required": [],
             },
-            handler=lambda hours=24, limit=50: repo.get_recent_frames(conn, hours, limit),
+            handler=lambda hours=24, limit=50: repo.get_recent_frames(session, hours, limit),
         ),
         ToolDef(
             name="get_frames_by_app",
@@ -74,7 +74,7 @@ def make_recall_tools(conn: sqlite3.Connection) -> list[ToolDef]:
                 },
                 "required": ["app_name"],
             },
-            handler=lambda app_name, limit=30: repo.get_frames_by_app(conn, app_name, limit),
+            handler=lambda app_name, limit=30: repo.get_frames_by_app(session, app_name, limit),
         ),
         ToolDef(
             name="get_recent_audio",
@@ -87,7 +87,7 @@ def make_recall_tools(conn: sqlite3.Connection) -> list[ToolDef]:
                 },
                 "required": [],
             },
-            handler=lambda hours=24, limit=50: repo.get_recent_audio(conn, hours, limit),
+            handler=lambda hours=24, limit=50: repo.get_recent_audio(session, hours, limit),
         ),
         ToolDef(
             name="get_recent_os_events",
@@ -100,7 +100,7 @@ def make_recall_tools(conn: sqlite3.Connection) -> list[ToolDef]:
                 },
                 "required": [],
             },
-            handler=lambda hours=24, limit=50: repo.get_recent_os_events(conn, hours, limit),
+            handler=lambda hours=24, limit=50: repo.get_recent_os_events(session, hours, limit),
         ),
         ToolDef(
             name="get_os_events_by_type",
@@ -113,6 +113,6 @@ def make_recall_tools(conn: sqlite3.Connection) -> list[ToolDef]:
                 },
                 "required": ["event_type"],
             },
-            handler=lambda event_type, limit=30: repo.get_os_events_by_type(conn, event_type, limit),
+            handler=lambda event_type, limit=30: repo.get_os_events_by_type(session, event_type, limit),
         ),
     ]

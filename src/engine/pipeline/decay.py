@@ -7,8 +7,9 @@ Formula: effective = confidence * max(0.3, 1.0 - days_since_evidence / 90)
 """
 
 import logging
-import sqlite3
 from datetime import datetime, timezone
+
+from sqlalchemy.orm import Session
 
 from engine.pipeline.repository import get_all_playbooks_for_decay, update_confidence
 
@@ -18,9 +19,9 @@ DECAY_DAYS = 90
 DECAY_FLOOR = 0.3
 
 
-def decay_confidence(conn: sqlite3.Connection) -> int:
+def decay_confidence(session: Session) -> int:
     """Apply time-based confidence decay. Returns number of entries updated."""
-    rows = get_all_playbooks_for_decay(conn)
+    rows = get_all_playbooks_for_decay(session)
     updated = 0
     now = datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -45,7 +46,7 @@ def decay_confidence(conn: sqlite3.Connection) -> int:
         if abs(new_confidence - original) < 0.0001:
             continue
 
-        update_confidence(conn, r["id"], new_confidence)
+        update_confidence(session, r["id"], new_confidence)
         updated += 1
         logger.debug("Decayed %s: %.4f → %.4f (%.0f days)", r["name"], original, new_confidence, days_since)
 

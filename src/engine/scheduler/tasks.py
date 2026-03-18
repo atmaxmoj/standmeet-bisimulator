@@ -8,7 +8,6 @@ Queue-native design:
 """
 
 import logging
-import sqlite3
 from pathlib import Path
 
 from huey import SqliteHuey, crontab
@@ -35,22 +34,6 @@ _llm = create_client(
 )
 
 
-def _get_conn():
-    """Get a sync DB connection."""
-    url = settings.database_url_sync
-    if "sqlite" in url:
-        path = url.split("///", 1)[-1]
-        conn = sqlite3.connect(path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        return conn
-    # PostgreSQL
-    import psycopg
-    from psycopg.rows import dict_row
-    dsn = url.replace("postgresql+psycopg://", "postgresql://")
-    return psycopg.connect(dsn, row_factory=dict_row)
-
-
 def _get_session():
     """Get a SQLAlchemy session for ORM operations."""
     from engine.storage.engine import get_sync_session_factory
@@ -65,10 +48,10 @@ def _get_session():
 @huey.lock_task("pipeline-check")
 def on_new_data():
     """Check unprocessed frames for complete windows. Deduplicated by lock."""
-    conn = _get_conn()
+    session = _get_session()
     try:
         from engine.etl.repository import load_unprocessed_frames
-        screen_frames, audio_frames, os_frames = load_unprocessed_frames(conn)
+        screen_frames, audio_frames, os_frames = load_unprocessed_frames(session)
 
         if not screen_frames and not audio_frames and not os_frames:
             return
@@ -90,7 +73,7 @@ def on_new_data():
                 "on_new_data: all %d frames filtered as noise (%d screen, %d audio, %d os), marking processed",
                 len(all_raw), len(screen_frames), len(audio_frames), len(os_frames),
             )
-            _mark_processed(conn, all_screen_ids, all_audio_ids, all_os_ids)
+            _mark_processed(session, all_screen_ids, all_audio_ids, all_os_ids)
             return
 
         # Detect windows
@@ -124,7 +107,7 @@ def on_new_data():
         # Mark everything EXCEPT remainder as processed
         remainder_ids = {f.id for f in remainder}
         _mark_processed(
-            conn,
+            session,
             all_screen_ids - remainder_ids,
             all_audio_ids - remainder_ids,
             all_os_ids - remainder_ids,
@@ -133,18 +116,18 @@ def on_new_data():
     except Exception:
         logger.exception("on_new_data failed")
     finally:
-        conn.close()
+        session.close()
 
 
 def _mark_processed(
-    conn,
+    session,
     screen_ids: set[int],
     audio_ids: set[int],
     os_event_ids: set[int] | None = None,
 ):
     """Mark frames as processed in DB."""
     from engine.etl.repository import mark_processed
-    mark_processed(conn, screen_ids, audio_ids, os_event_ids)
+    mark_processed(session, screen_ids, audio_ids, os_event_ids)
 
 
 # -- Process a window: read full data from DB by IDs, call Haiku --
@@ -159,19 +142,19 @@ def process_episode(
     """Read frame data from DB, call LLM, store episodes."""
     if not screen_ids and not audio_ids and not os_event_ids:
         return
-    conn = _get_conn()
+    session = _get_session()
     try:
-        if not check_daily_budget(conn, DAILY_COST_CAP_USD):
+        if not check_daily_budget(session, DAILY_COST_CAP_USD):
             logger.warning("process_episode: budget exceeded, skipping")
             return
-        tasks, count = run_episode(_llm, conn, screen_ids, audio_ids, os_event_ids)
-        conn.commit()
+        tasks, count = run_episode(_llm, session, screen_ids, audio_ids, os_event_ids)
+        session.commit()
         logger.info("process_episode: %d episodes created", count)
     except Exception:
         logger.exception("process_episode FAILED (screen=%d, audio=%d, os=%d)",
                          len(screen_ids), len(audio_ids), len(os_event_ids or []))
     finally:
-        conn.close()
+        session.close()
 
 
 # -- Daily playbook distillation --
@@ -180,18 +163,18 @@ def process_episode(
 @huey.periodic_task(crontab(hour="3", minute="0"))
 def daily_distill_task():
     """Daily playbook distillation with Opus. Runs every day at 3am."""
-    conn = _get_conn()
+    session = _get_session()
     try:
-        if not check_daily_budget(conn, DAILY_COST_CAP_USD):
+        if not check_daily_budget(session, DAILY_COST_CAP_USD):
             logger.warning("daily distill: budget exceeded, skipping")
             return
-        count = run_distill(_llm, conn)
-        conn.commit()
+        count = run_distill(_llm, session)
+        session.commit()
         logger.info("daily distill: %d entries updated", count)
     except Exception:
         logger.exception("daily distill FAILED")
     finally:
-        conn.close()
+        session.close()
 
 
 # -- Daily routine extraction (runs after distill) --
@@ -200,18 +183,18 @@ def daily_distill_task():
 @huey.periodic_task(crontab(hour="3", minute="30"))
 def daily_routines_task():
     """Daily routine extraction with Opus. Runs at 3:30am."""
-    conn = _get_conn()
+    session = _get_session()
     try:
-        if not check_daily_budget(conn, DAILY_COST_CAP_USD):
+        if not check_daily_budget(session, DAILY_COST_CAP_USD):
             logger.warning("daily routines: budget exceeded, skipping")
             return
-        count = run_routines(_llm, conn)
-        conn.commit()
+        count = run_routines(_llm, session)
+        session.commit()
         logger.info("daily routines: %d routines updated", count)
     except Exception:
         logger.exception("daily routines FAILED")
     finally:
-        conn.close()
+        session.close()
 
 
 # -- Weekly garbage collection --
@@ -256,29 +239,29 @@ def daily_gc_task():
     from engine.agents.tools.dedup import make_dedup_tools
     from engine.agents.tools.audit import make_audit_tools
 
-    conn = _get_conn()
+    session = _get_session()
     try:
         # Budget check
-        if not check_daily_budget(conn, DAILY_COST_CAP_USD):
+        if not check_daily_budget(session, DAILY_COST_CAP_USD):
             logger.warning("daily_gc: daily budget exceeded, skipping")
             return
 
         # Phase 1: Deterministic decay
-        decayed = decay_confidence(conn)
+        decayed = decay_confidence(session)
         logger.info("daily_gc: decayed %d entries", decayed)
 
         # Phase 2: Agent-driven audit (only if LLM supports tools)
-        gc_tools = make_dedup_tools(conn) + make_audit_tools(conn)
+        gc_tools = make_dedup_tools(session) + make_audit_tools(session)
         try:
             resp = _llm.complete_with_tools(
                 GC_PROMPT, MODEL_DEEP, gc_tools, max_turns=10,
             )
             from engine.storage.sync_db import SyncDB
             cost = resp.cost_usd or 0
-            db = SyncDB(conn)
+            db = SyncDB(session)
             db.record_usage(MODEL_DEEP, "gc", resp.input_tokens, resp.output_tokens, cost)
             db.insert_pipeline_log("gc", GC_PROMPT, resp.text, MODEL_DEEP, resp.input_tokens, resp.output_tokens, cost)
-            conn.commit()
+            session.commit()
             logger.info("daily_gc: agent audit complete, cost=$%.4f", cost)
         except NotImplementedError:
             logger.info("daily_gc: LLM client does not support tools, skipping agent audit")
@@ -286,4 +269,4 @@ def daily_gc_task():
     except Exception:
         logger.exception("daily_gc failed")
     finally:
-        conn.close()
+        session.close()

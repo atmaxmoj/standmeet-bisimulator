@@ -1,6 +1,6 @@
 """Tools for agentic L2 distillation (non-MCP, ToolDef-based)."""
 
-import sqlite3
+from sqlalchemy.orm import Session
 
 from engine.llm.types import ToolDef
 from engine.observability.logger import log_tool_call
@@ -9,15 +9,15 @@ from engine.agents import repository as repo
 STAGE = "distill_agentic"
 
 
-def _logged(conn, name, fn):
+def _logged(session, name, fn):
     def wrapper(**kwargs):
         result = fn(**kwargs)
-        log_tool_call(conn, STAGE, name, kwargs, result)
+        log_tool_call(session, STAGE, name, kwargs, result)
         return result
     return wrapper
 
 
-def make_distill_tools(conn: sqlite3.Connection) -> list[ToolDef]:
+def make_distill_tools(session: Session) -> list[ToolDef]:
     """Create tools for the distill agent."""
     return [
         ToolDef(
@@ -31,8 +31,8 @@ def make_distill_tools(conn: sqlite3.Connection) -> list[ToolDef]:
                 },
                 "required": ["query"],
             },
-            handler=_logged(conn, "search_episodes",
-                            lambda query, limit=10: repo.search_episodes(conn, query, limit)),
+            handler=_logged(session, "search_episodes",
+                            lambda query, limit=10: repo.search_episodes(session, query, limit)),
         ),
         ToolDef(
             name="get_episode_detail",
@@ -42,8 +42,8 @@ def make_distill_tools(conn: sqlite3.Connection) -> list[ToolDef]:
                 "properties": {"episode_id": {"type": "integer"}},
                 "required": ["episode_id"],
             },
-            handler=_logged(conn, "get_episode_detail",
-                            lambda episode_id: repo.get_episode_detail(conn, episode_id) or {"error": "not found"}),
+            handler=_logged(session, "get_episode_detail",
+                            lambda episode_id: repo.get_episode_detail(session, episode_id) or {"error": "not found"}),
         ),
         ToolDef(
             name="get_episode_frames",
@@ -56,8 +56,8 @@ def make_distill_tools(conn: sqlite3.Connection) -> list[ToolDef]:
                 },
                 "required": ["episode_id"],
             },
-            handler=_logged(conn, "get_episode_frames",
-                            lambda episode_id, limit=10: repo.get_episode_frames(conn, episode_id, limit)),
+            handler=_logged(session, "get_episode_frames",
+                            lambda episode_id, limit=10: repo.get_episode_frames(session, episode_id, limit)),
         ),
         ToolDef(
             name="get_playbook_history",
@@ -67,15 +67,15 @@ def make_distill_tools(conn: sqlite3.Connection) -> list[ToolDef]:
                 "properties": {"name": {"type": "string"}},
                 "required": ["name"],
             },
-            handler=_logged(conn, "get_playbook_history",
-                            lambda name: repo.get_playbook_history(conn, name)),
+            handler=_logged(session, "get_playbook_history",
+                            lambda name: repo.get_playbook_history(session, name)),
         ),
         ToolDef(
             name="get_all_playbook_entries",
             description="List all current playbook entries.",
             input_schema={"type": "object", "properties": {}},
-            handler=_logged(conn, "get_all_playbook_entries",
-                            lambda: repo.get_all_playbook_entries(conn)),
+            handler=_logged(session, "get_all_playbook_entries",
+                            lambda: repo.get_all_playbook_entries(session)),
         ),
         ToolDef(
             name="write_playbook_entry",
@@ -92,9 +92,9 @@ def make_distill_tools(conn: sqlite3.Connection) -> list[ToolDef]:
                 },
                 "required": ["name", "context", "action", "confidence", "maturity", "evidence"],
             },
-            handler=_logged(conn, "write_playbook_entry",
+            handler=_logged(session, "write_playbook_entry",
                             lambda name, context, action, confidence, maturity, evidence:
-                            (repo.write_playbook_entry(conn, name, context, action, confidence, maturity, evidence),
+                            (repo.write_playbook_entry(session, name, context, action, confidence, maturity, evidence),
                              {"status": "ok", "name": name})[-1]),
         ),
     ]
