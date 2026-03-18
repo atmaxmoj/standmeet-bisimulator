@@ -142,6 +142,8 @@ def _run_distill_agentic(llm: LLMClient, conn: sqlite3.Connection) -> int:
                 env=env,
             ),
         ):
+            msg_type = type(msg).__name__
+            logger.debug("distill_agentic msg: %s %s", msg_type, str(msg)[:500])
             if isinstance(msg, ResultMessage):
                 result_text = msg.result or ""
                 cost_usd = msg.total_cost_usd

@@ -10,11 +10,18 @@ from engine.llm.types import ToolDef
 
 
 def search_episodes(conn: sqlite3.Connection, query: str, limit: int = 10) -> list[dict]:
-    """Search episode summaries by keyword (SQLite LIKE)."""
+    """Search episode summaries by keyword (SQLite LIKE, splits multi-word queries)."""
+    words = query.strip().split()
+    if len(words) > 1:
+        where = " AND ".join("summary LIKE ?" for _ in words)
+        params = [f"%{w}%" for w in words]
+    else:
+        where = "summary LIKE ?"
+        params = [f"%{query}%"]
     rows = conn.execute(
-        "SELECT id, summary, app_names, started_at, ended_at "
-        "FROM episodes WHERE summary LIKE ? ORDER BY id DESC LIMIT ?",
-        (f"%{query}%", limit),
+        f"SELECT id, summary, app_names, started_at, ended_at "
+        f"FROM episodes WHERE {where} ORDER BY id DESC LIMIT ?",
+        params + [limit],
     ).fetchall()
     return [dict(r) for r in rows]
 

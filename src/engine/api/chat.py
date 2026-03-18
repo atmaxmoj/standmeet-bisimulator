@@ -235,6 +235,7 @@ async def _web_search(search_query: str, max_results: int = 5) -> list[dict]:
         ):
             msg_type = type(msg).__name__
             search_log.append({"type": msg_type, "data": str(msg)[:500]})
+            logger.debug("web_search msg: %s %s", msg_type, str(msg)[:500])
 
             if isinstance(msg, ResultMessage):
                 result_text = msg.result or ""

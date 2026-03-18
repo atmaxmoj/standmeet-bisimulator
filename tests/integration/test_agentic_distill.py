@@ -4,6 +4,7 @@ Usage: npm run test:integration
 """
 
 import json
+import logging
 import os
 import sqlite3
 import sys
@@ -12,6 +13,8 @@ import traceback
 from pathlib import Path
 
 sys.path.insert(0, "/app/src")
+
+logging.basicConfig(level=logging.DEBUG, format="%(levelname)s %(name)s %(message)s")
 
 RESULTS_DIR = Path("/data/test_results")
 

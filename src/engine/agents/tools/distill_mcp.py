@@ -24,10 +24,17 @@ def create_distill_mcp_server(conn: sqlite3.Connection) -> FastMCP:
     @mcp.tool()
     def search_episodes(query: str, limit: int = 10) -> str:
         """Search episodes by keyword in summary. Returns matching episodes."""
+        words = query.strip().split()
+        if len(words) > 1:
+            where = " AND ".join("summary LIKE ?" for _ in words)
+            params = [f"%{w}%" for w in words]
+        else:
+            where = "summary LIKE ?"
+            params = [f"%{query}%"]
         rows = conn.execute(
-            "SELECT id, summary, app_names, started_at, ended_at "
-            "FROM episodes WHERE summary LIKE ? ORDER BY created_at DESC LIMIT ?",
-            (f"%{query}%", limit),
+            f"SELECT id, summary, app_names, started_at, ended_at "
+            f"FROM episodes WHERE {where} ORDER BY created_at DESC LIMIT ?",
+            params + [limit],
         ).fetchall()
         result = [dict(r) for r in rows]
         log_tool_call(conn, STAGE, "search_episodes", {"query": query, "limit": limit}, result)
