@@ -51,6 +51,7 @@ function RoutineCard({ routine }: { routine: Routine }) {
 export function RoutinesPanel() {
   const [routines, setRoutines] = useState<Routine[]>([]);
   const [loading, setLoading] = useState(true);
+  const [composing, setComposing] = useState(false);
   const [search, setSearch] = useState("");
 
   const load = useCallback(async () => {
@@ -58,6 +59,17 @@ export function RoutinesPanel() {
     try { setRoutines((await api.routines(search)).routines); } catch (e) { console.error(e); }
     setLoading(false);
   }, [search]);
+
+  const runCompose = async () => {
+    if (!confirm("Run routine composition? This will call Opus.")) return;
+    setComposing(true);
+    try {
+      const result = await api.compose();
+      alert(`Compose complete: ${result.routines_updated} routines updated`);
+      load();
+    } catch (e) { console.error(e); }
+    setComposing(false);
+  };
 
   useEffect(() => { load(); }, [load]);
 
@@ -68,7 +80,12 @@ export function RoutinesPanel() {
           <SearchInput onSearch={setSearch} />
           <span className="text-sm text-muted-foreground">{routines.length} routines</span>
         </div>
-        <Button variant="outline" size="sm" onClick={load}>Refresh</Button>
+        <div className="flex items-center gap-2">
+          <Button variant="default" size="sm" onClick={runCompose} disabled={composing}>
+            {composing ? "Running..." : "Run Compose"}
+          </Button>
+          <Button variant="outline" size="sm" onClick={load}>Refresh</Button>
+        </div>
       </div>
 
       {loading ? (

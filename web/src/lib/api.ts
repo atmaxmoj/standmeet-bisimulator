@@ -124,6 +124,7 @@ export interface UsageSummary {
 interface Status {
   episode_count: number;
   playbook_count: number;
+  routine_count: number;
   capture_alive: boolean;
 }
 
@@ -168,6 +169,8 @@ export const api = {
   routines: (search = "") =>
     get<{ routines: Routine[] }>(`/memory/routines/?${qs({ search })}`),
   distill: () => post<{ playbook_entries_updated: number }>("/engine/distill"),
+  compose: () => post<{ routines_updated: number }>("/engine/routines"),
+  gc: () => post<{ status: string }>("/engine/gc"),
   batchDelete: (table: string, ids: number[]) =>
     post<{ deleted: number }>("/batch/delete", { table, ids }),
   updatePlaybook: (fields: Record<string, unknown>) =>

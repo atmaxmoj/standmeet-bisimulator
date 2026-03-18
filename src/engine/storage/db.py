@@ -494,6 +494,7 @@ class DB:
         async with self._session() as s:
             episode_count = (await s.execute(select(func.count()).select_from(Episode))).scalar()
             playbook_count = (await s.execute(select(func.count()).select_from(PlaybookEntry))).scalar()
+            routine_count = (await s.execute(select(func.count()).select_from(Routine))).scalar()
             last_frame = (await s.execute(
                 select(Frame.timestamp).order_by(Frame.id.desc()).limit(1)
             )).scalar_one_or_none()
@@ -510,6 +511,7 @@ class DB:
             return {
                 "episode_count": episode_count,
                 "playbook_count": playbook_count,
+                "routine_count": routine_count,
                 "capture_alive": capture_alive,
                 "last_frame_at": last_frame,
             }

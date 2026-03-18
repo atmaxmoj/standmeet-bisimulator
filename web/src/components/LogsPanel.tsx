@@ -34,7 +34,10 @@ function LogCard({ log, expanded, onToggle }: { log: PipelineLog; expanded: bool
       <CardHeader className="pb-2">
         <CardTitle className="text-sm font-normal flex items-center gap-2">
           <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
-            log.stage === "distill" ? "bg-purple-500/15 text-purple-400" : "bg-blue-500/15 text-blue-400"
+            log.stage === "distill" ? "bg-purple-500/15 text-purple-400" :
+            log.stage === "compose" || log.stage === "compose_agentic" ? "bg-amber-500/15 text-amber-400" :
+            log.stage === "gc" ? "bg-pink-500/15 text-pink-400" :
+            "bg-blue-500/15 text-blue-400"
           }`}>
             {log.stage}
           </span>
@@ -56,6 +59,7 @@ function LogCard({ log, expanded, onToggle }: { log: PipelineLog; expanded: bool
 export function LogsPanel() {
   const [logs, setLogs] = useState<PipelineLog[]>([]);
   const [loading, setLoading] = useState(true);
+  const [gcRunning, setGcRunning] = useState(false);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -83,7 +87,26 @@ export function LogsPanel() {
       <div className="p-6 space-y-4">
         <div className="flex items-center justify-between">
           <SearchInput onSearch={setSearch} />
-          <Button variant="outline" size="sm" onClick={() => load(page)}>Refresh</Button>
+          <div className="flex items-center gap-2">
+            <div className="relative group">
+              <Button variant="default" size="sm" onClick={async () => {
+                if (!confirm("Run garbage collection? (decay + audit + sensitive data scan)")) return;
+                setGcRunning(true);
+                try {
+                  await api.gc();
+                  load(1);
+                } catch (e) { console.error(e); }
+                setGcRunning(false);
+              }} disabled={gcRunning}>
+                {gcRunning ? "Running..." : "Run GC"}
+              </Button>
+              <span className="ml-1 inline-flex items-center justify-center w-4 h-4 rounded-full border text-[10px] text-muted-foreground cursor-help"
+                title="Garbage Collection: decays stale playbook/routine confidence, audits data quality, scans for sensitive data (passwords, API keys), and purges old processed frames.">
+                ?
+              </span>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => load(page)}>Refresh</Button>
+          </div>
         </div>
 
         {loading ? (

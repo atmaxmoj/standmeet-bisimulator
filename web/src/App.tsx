@@ -1,52 +1,20 @@
-import { useEffect, useState } from "react";
+import { useState, useEffect, type ComponentType } from "react";
+import { Button } from "@/components/ui/button";
 import { FramesPanel } from "@/components/FramesPanel";
 import { AudioPanel } from "@/components/AudioPanel";
 import { EpisodesPanel } from "@/components/EpisodesPanel";
 import { PlaybooksPanel } from "@/components/PlaybooksPanel";
-import { OsEventsPanel } from "@/components/OsEventsPanel";
+import { RoutinesPanel } from "@/components/RoutinesPanel";
 import { UsagePanel } from "@/components/UsagePanel";
 import { LogsPanel } from "@/components/LogsPanel";
+import { OsEventsPanel } from "@/components/OsEventsPanel";
 import { ChatPanel } from "@/components/ChatPanel";
-import { RoutinesPanel } from "@/components/RoutinesPanel";
 import { api } from "@/lib/api";
 
-/* ── sidebar nav structure ── */
-
-type NavItem = { key: string; label: string };
-type NavGroup = { title: string; items: NavItem[] };
-
-const NAV: NavGroup[] = [
-  {
-    title: "Capture",
-    items: [
-      { key: "frames", label: "Screen" },
-      { key: "audio", label: "Audio" },
-      { key: "os-events", label: "OS Events" },
-    ],
-  },
-  {
-    title: "Memory",
-    items: [
-      { key: "episodes", label: "Episodes" },
-      { key: "playbooks", label: "Playbook" },
-      { key: "routines", label: "Routines" },
-      { key: "chat", label: "Manage" },
-    ],
-  },
-  {
-    title: "Usage",
-    items: [{ key: "usage", label: "Cost & Tokens" }],
-  },
-  {
-    title: "Logs",
-    items: [{ key: "logs", label: "Pipeline Logs" }],
-  },
-];
-
-const PANELS: Record<string, React.FC> = {
+const panels: Record<string, ComponentType> = {
   frames: FramesPanel,
   audio: AudioPanel,
-  "os-events": OsEventsPanel,
+  os_events: OsEventsPanel,
   episodes: EpisodesPanel,
   playbooks: PlaybooksPanel,
   routines: RoutinesPanel,
@@ -55,46 +23,58 @@ const PANELS: Record<string, React.FC> = {
   chat: ChatPanel,
 };
 
-/* ── header ── */
+const sidebarGroups: { label: string; items: { key: string; label: string }[] }[] = [
+  {
+    label: "Capture",
+    items: [
+      { key: "frames", label: "Frames" },
+      { key: "audio", label: "Audio" },
+      { key: "os_events", label: "OS Events" },
+    ],
+  },
+  {
+    label: "Memory",
+    items: [
+      { key: "episodes", label: "Episodes" },
+      { key: "playbooks", label: "Playbooks" },
+      { key: "routines", label: "Routines" },
+    ],
+  },
+  {
+    label: "System",
+    items: [
+      { key: "usage", label: "Usage" },
+      { key: "logs", label: "Logs" },
+      { key: "chat", label: "Chat" },
+    ],
+  },
+];
 
-function PipelineToggle({
-  online, captureAlive, paused, toggling, onToggle,
-}: {
+function PipelineToggle({ online, captureAlive, paused, toggling, onToggle }: {
   online: boolean; captureAlive: boolean; paused: boolean; toggling: boolean; onToggle: () => void;
 }) {
-  const off = paused || !online || !captureAlive;
   return (
-    <button
-      onClick={onToggle}
-      disabled={toggling || !online}
-      data-testid="pipeline-toggle"
-      className={`flex items-center gap-2 px-2.5 py-1 rounded-full border transition-colors disabled:opacity-50 ${
-        !online || !captureAlive ? "border-destructive/40"
-          : paused ? "border-yellow-500/40"
-          : "border-green-500/40"
-      }`}
-    >
-      <span className="flex items-center gap-1.5" data-testid="engine-status">
-        <span className={`w-2 h-2 rounded-full ${
-          !online ? "bg-destructive"
-            : !captureAlive ? "bg-destructive animate-pulse"
-            : paused ? "bg-yellow-500"
-            : "bg-green-500 animate-pulse"
-        }`} />
-        <span className="text-[10px]">
-          {!online ? "Offline" : !captureAlive ? "Capture down" : paused ? "Paused" : "Recording"}
-        </span>
-      </span>
-      <span className={`relative w-7 h-3.5 rounded-full transition-colors ${off ? "bg-muted" : "bg-green-500"}`}>
-        <span className={`absolute top-0.5 w-2.5 h-2.5 rounded-full bg-white shadow transition-transform ${off ? "left-0.5" : "left-[14px]"}`} />
-      </span>
-    </button>
+    <div className="flex items-center gap-2" data-testid="pipeline-toggle">
+      <span className={`w-2 h-2 rounded-full ${captureAlive ? "bg-green-500" : online ? "bg-yellow-500" : "bg-red-500"}`} />
+      <button
+        onClick={onToggle}
+        disabled={toggling}
+        className="relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border transition-colors focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+        style={{ backgroundColor: paused ? "hsl(var(--muted))" : "hsl(var(--primary))" }}
+        role="switch"
+        aria-checked={!paused}
+        data-testid="pipeline-switch"
+      >
+        <span className={`pointer-events-none block h-3.5 w-3.5 rounded-full bg-background shadow-sm ring-0 transition-transform ${paused ? "translate-x-0.5" : "translate-x-[18px]"}`} />
+      </button>
+      <span className="text-xs">{paused ? "Paused" : "Recording"}</span>
+    </div>
   );
 }
 
 function Header() {
   const [status, setStatus] = useState({
-    online: false, episodes: 0, playbooks: 0, cost: 0, captureAlive: false,
+    online: false, episodes: 0, playbooks: 0, routines: 0, cost: 0, captureAlive: false,
   });
   const [paused, setPaused] = useState(false);
   const [toggling, setToggling] = useState(false);
@@ -103,7 +83,14 @@ function Header() {
     const load = async () => {
       try {
         const [s, u, p] = await Promise.all([api.status(), api.usage(30), api.pipeline()]);
-        setStatus({ online: true, episodes: s.episode_count, playbooks: s.playbook_count, cost: u.total_cost_usd, captureAlive: s.capture_alive });
+        setStatus({
+          online: true,
+          episodes: s.episode_count,
+          playbooks: s.playbook_count,
+          routines: s.routine_count ?? 0,
+          cost: u.total_cost_usd,
+          captureAlive: s.capture_alive,
+        });
         setPaused(p.paused);
       } catch {
         setStatus((prev) => ({ ...prev, online: false }));
@@ -131,77 +118,41 @@ function Header() {
         <PipelineToggle online={status.online} captureAlive={status.captureAlive} paused={paused} toggling={toggling} onToggle={togglePipeline} />
         <span data-testid="episode-count">{status.episodes} episodes</span>
         <span data-testid="playbook-count">{status.playbooks} playbooks</span>
+        <span data-testid="routine-count">{status.routines} routines</span>
         <span className="font-medium text-primary" data-testid="total-cost">${status.cost.toFixed(4)}</span>
       </div>
     </header>
   );
 }
 
-/* ── sidebar ── */
-
-function Sidebar({
-  active,
-  onSelect,
-}: {
-  active: string;
-  onSelect: (key: string) => void;
-}) {
-  return (
-    <nav className="w-48 shrink-0 border-r overflow-y-auto py-4 bg-background" data-testid="sidebar">
-      {NAV.map((group) => (
-        <div key={group.title} className="mb-4">
-          <div className="px-4 mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-            {group.title}
-          </div>
-          {group.items.map((item) => (
-            <button
-              key={item.key}
-              onClick={() => onSelect(item.key)}
-              data-testid={`nav-${item.key}`}
-              className={`w-full text-left px-4 py-1.5 text-sm transition-colors ${
-                active === item.key
-                  ? "bg-accent text-accent-foreground font-medium"
-                  : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
-              }`}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
-      ))}
-    </nav>
-  );
-}
-
-/* ── app ── */
-
-function readHash(fallback: string) {
-  const h = window.location.hash.slice(1);
-  return h in PANELS ? h : fallback;
-}
-
-function useHashNav(fallback: string) {
-  const [active, setActive] = useState(() => readHash(fallback));
-  useEffect(() => {
-    const onHash = () => setActive(readHash(fallback));
-    window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
-  }, [fallback]);
-  const navigate = (key: string) => { window.location.hash = key; };
-  return [active, navigate] as const;
-}
-
 export default function App() {
-  const [active, setActive] = useHashNav("frames");
-  const Panel = PANELS[active];
+  const [active, setActive] = useState("frames");
+  const Panel = panels[active];
 
   return (
-    <div className="h-screen bg-background flex flex-col overflow-hidden">
+    <div className="h-screen flex flex-col bg-background text-foreground">
       <Header />
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar active={active} onSelect={setActive} />
-        <main className="flex-1 overflow-y-auto flex flex-col min-h-0" data-testid="main-content">
-          {Panel && <Panel />}
+        <aside className="w-48 shrink-0 border-r p-3 space-y-4 overflow-y-auto" data-testid="sidebar">
+          {sidebarGroups.map((group) => (
+            <div key={group.label}>
+              <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-widest mb-1 px-2">{group.label}</p>
+              {group.items.map((item) => (
+                <Button
+                  key={item.key}
+                  variant={active === item.key ? "secondary" : "ghost"}
+                  className="w-full justify-start h-8 text-xs"
+                  onClick={() => setActive(item.key)}
+                  data-testid={`nav-${item.key}`}
+                >
+                  {item.label}
+                </Button>
+              ))}
+            </div>
+          ))}
+        </aside>
+        <main className="flex-1 overflow-y-auto">
+          <Panel />
         </main>
       </div>
     </div>
