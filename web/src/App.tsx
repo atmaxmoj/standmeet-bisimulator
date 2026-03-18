@@ -8,7 +8,7 @@ import { RoutinesPanel } from "@/components/RoutinesPanel";
 import { UsagePanel } from "@/components/UsagePanel";
 import { LogsPanel } from "@/components/LogsPanel";
 import { OsEventsPanel } from "@/components/OsEventsPanel";
-import { ChatPanel } from "@/components/ChatPanel";
+import { ManagePanel } from "@/components/ManagePanel";
 import { api } from "@/lib/api";
 
 const panels: Record<string, ComponentType> = {
@@ -20,7 +20,7 @@ const panels: Record<string, ComponentType> = {
   routines: RoutinesPanel,
   usage: UsagePanel,
   logs: LogsPanel,
-  chat: ChatPanel,
+  chat: ManagePanel,
 };
 
 const sidebarGroups: { label: string; items: { key: string; label: string }[] }[] = [
@@ -45,7 +45,7 @@ const sidebarGroups: { label: string; items: { key: string; label: string }[] }[
     items: [
       { key: "usage", label: "Usage" },
       { key: "logs", label: "Logs" },
-      { key: "chat", label: "Chat" },
+      { key: "chat", label: "Manage" },
     ],
   },
 ];

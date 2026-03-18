@@ -59,7 +59,6 @@ function LogCard({ log, expanded, onToggle }: { log: PipelineLog; expanded: bool
 export function LogsPanel() {
   const [logs, setLogs] = useState<PipelineLog[]>([]);
   const [loading, setLoading] = useState(true);
-  const [gcRunning, setGcRunning] = useState(false);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -87,26 +86,7 @@ export function LogsPanel() {
       <div className="p-6 space-y-4">
         <div className="flex items-center justify-between">
           <SearchInput onSearch={setSearch} />
-          <div className="flex items-center gap-2">
-            <div className="relative group">
-              <Button variant="default" size="sm" onClick={async () => {
-                if (!confirm("Run garbage collection? (decay + audit + sensitive data scan)")) return;
-                setGcRunning(true);
-                try {
-                  await api.gc();
-                  load(1);
-                } catch (e) { console.error(e); }
-                setGcRunning(false);
-              }} disabled={gcRunning}>
-                {gcRunning ? "Running..." : "Run GC"}
-              </Button>
-              <span className="ml-1 inline-flex items-center justify-center w-4 h-4 rounded-full border text-[10px] text-muted-foreground cursor-help"
-                title="Garbage Collection: decays stale playbook/routine confidence, audits data quality, scans for sensitive data (passwords, API keys), and purges old processed frames.">
-                ?
-              </span>
-            </div>
-            <Button variant="outline" size="sm" onClick={() => load(page)}>Refresh</Button>
-          </div>
+          <Button variant="outline" size="sm" onClick={() => load(page)}>Refresh</Button>
         </div>
 
         {loading ? (

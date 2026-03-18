@@ -178,7 +178,28 @@ function useLoadHistory(setMessages: React.Dispatch<React.SetStateAction<UIMessa
   }, [setMessages, scrollRef]);
 }
 
-export function ChatPanel() {
+function GcButton({ onComplete }: { onComplete: (msg: string) => void }) {
+  const [running, setRunning] = useState(false);
+  const run = async () => {
+    if (!confirm("Run garbage collection? (decay + audit + sensitive data scan)")) return;
+    setRunning(true);
+    try { await api.gc(); onComplete("GC completed. Check Logs panel for the report."); } catch (e) { console.error(e); }
+    setRunning(false);
+  };
+  return (
+    <div className="flex items-center gap-1.5">
+      <Button variant="outline" size="sm" onClick={run} disabled={running}>
+        {running ? "Running..." : "Run GC"}
+      </Button>
+      <span className="inline-flex items-center justify-center w-4 h-4 rounded-full border text-[10px] text-muted-foreground cursor-help"
+        title="Garbage Collection: decays stale confidence, audits playbook quality, scans for sensitive data (passwords, API keys), purges old frames.">
+        ?
+      </span>
+    </div>
+  );
+}
+
+function useChat() {
   const [messages, setMessages] = useState<UIMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [toolLabel, setToolLabel] = useState("");
@@ -260,8 +281,17 @@ export function ChatPanel() {
 
   const handleClear = useCallback(async () => { await api.chatClear(); setMessages([]); }, []);
 
+  return { messages, setMessages, loading, toolLabel, scrollRef, stop, send, handleApprove, handleReject, handleClear };
+}
+
+export function ManagePanel() {
+  const { messages, setMessages, loading, toolLabel, scrollRef, stop, send, handleApprove, handleReject, handleClear } = useChat();
+
   return (
     <div className="flex flex-col flex-1 min-h-0" data-testid="chat-panel">
+      <div className="flex items-center justify-end px-4 py-2 border-b">
+        <GcButton onComplete={(msg) => setMessages((prev) => [...prev, { role: "assistant", content: msg }])} />
+      </div>
       <MessageList messages={messages} loading={loading} toolLabel={toolLabel}
         onApprove={handleApprove} onReject={handleReject} onStop={stop} scrollRef={scrollRef} />
       <ChatInputBar onSend={send} onClear={handleClear} loading={loading} hasMessages={messages.length > 0} />
