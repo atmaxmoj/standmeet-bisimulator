@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from engine.storage.models import Base, PlaybookEntry
+from engine.storage.models import Base, PlaybookEntry, Routine
 from engine.pipeline.decay import decay_confidence
 
 
@@ -79,9 +79,6 @@ class TestDecayConfidence:
         # 30 days: factor = max(0.3, 1.0 - 30/90) = 0.6667
         expected = 1.0 * (1.0 - 30 / 90)
         assert abs(row.confidence - expected) < 0.01
-
-
-from engine.storage.models import Routine
 
 
 def _insert_routine(session, name, confidence, updated_at=None):

@@ -33,28 +33,8 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
   return res.json();
 }
 
-export interface Frame {
-  id: number;
-  timestamp: string;
-  app_name: string;
-  window_name: string;
-  text: string;
-  display_id: number;
-  image_hash: string;
-  image_path: string;
-}
-
 export function frameImageUrl(frameId: number): string {
   return `${BASE}/capture/frames/${frameId}/image`;
-}
-
-export interface AudioFrame {
-  id: number;
-  timestamp: string;
-  duration_seconds: number;
-  text: string;
-  language: string;
-  source: "mic" | "speaker";
 }
 
 export interface Episode {
@@ -65,14 +45,6 @@ export interface Episode {
   started_at: string;
   ended_at: string;
   created_at: string;
-}
-
-export interface OsEvent {
-  id: number;
-  timestamp: string;
-  event_type: string;
-  source: string;
-  data: string;
 }
 
 export interface Playbook {
@@ -121,6 +93,28 @@ export interface UsageSummary {
   }[];
 }
 
+export interface SourceManifest {
+  name: string;
+  display_name: string;
+  description: string;
+  db: {
+    table: string;
+    columns: Record<string, string>;
+  };
+  ui: {
+    icon: string;
+    visible_columns: string[];
+    searchable_columns: string[];
+    detail_columns: string[];
+  };
+  events: Record<string, { label: string; color: string }>;
+}
+
+export interface SourceRecord {
+  id: number;
+  [key: string]: unknown;
+}
+
 interface Status {
   episode_count: number;
   playbook_count: number;
@@ -149,18 +143,10 @@ function qs(params: Record<string, string | number>): string {
 
 export const api = {
   status: () => get<Status>("/engine/status"),
-  frames: (limit = 30, offset = 0, search = "") =>
-    get<{ frames: Frame[]; total: number }>(`/capture/frames?${qs({ limit, offset, search })}`),
-  audio: (limit = 30, offset = 0, search = "") =>
-    get<{ audio: AudioFrame[]; total: number }>(`/capture/audio?${qs({ limit, offset, search })}`),
   episodes: (limit = 20, offset = 0, search = "") =>
     get<{ episodes: Episode[]; total: number }>(`/memory/episodes/?${qs({ limit, offset, search })}`),
   playbooks: (search = "") =>
     get<{ playbooks: Playbook[] }>(`/memory/playbooks/?${qs({ search })}`),
-  osEvents: (limit = 50, offset = 0, eventType = "", search = "") =>
-    get<{ events: OsEvent[]; total: number }>(
-      `/capture/os-events?${qs({ limit, offset, event_type: eventType, search })}`
-    ),
   usage: (days = 30) => get<UsageSummary>(`/engine/usage?days=${days}`),
   budget: () => get<{ daily_spend_usd: number; daily_cap_usd: number; under_budget: boolean }>("/engine/budget"),
   setBudget: (cap: number) => put<{ daily_cap_usd: number }>("/engine/budget", { daily_cap_usd: cap }),
@@ -171,6 +157,11 @@ export const api = {
   distill: () => post<{ playbook_entries_updated: number }>("/engine/distill"),
   compose: () => post<{ routines_updated: number }>("/engine/routines"),
   gc: () => post<{ status: string }>("/engine/gc"),
+  sources: () => get<{ sources: SourceManifest[] }>("/engine/sources"),
+  sourceData: (name: string, limit = 50, offset = 0, search = "") =>
+    get<{ records: SourceRecord[]; total: number }>(
+      `/sources/${name}/data?${qs({ limit, offset, search })}`
+    ),
   batchDelete: (table: string, ids: number[]) =>
     post<{ deleted: number }>("/batch/delete", { table, ids }),
   updatePlaybook: (fields: Record<string, unknown>) =>

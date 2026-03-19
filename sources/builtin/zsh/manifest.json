@@ -1,0 +1,47 @@
+{
+  "name": "zsh",
+  "version": "0.1.0",
+  "display_name": "Zsh History",
+  "description": "Captures shell commands from zsh history files",
+  "author": "builtin",
+  "platform": ["darwin"],
+  "entrypoint": "zsh_source:ZshSource",
+
+  "events": {
+    "shell_command": {
+      "label": "Shell Command",
+      "color": "green"
+    }
+  },
+
+  "db": {
+    "table": "zsh_data",
+    "columns": {
+      "timestamp": "text not null",
+      "command": "text not null default ''",
+      "processed": "integer not null default 0"
+    },
+    "indexes": ["processed", "timestamp"]
+  },
+
+  "ui": {
+    "icon": "terminal",
+    "visible_columns": ["timestamp", "command"],
+    "searchable_columns": ["command"],
+    "detail_columns": []
+  },
+
+  "context": {
+    "description": "Shell commands the user executed in zsh terminal",
+    "format": "[{timestamp}] [zsh]: {command}"
+  },
+
+  "gc": {
+    "prompt": "Zsh history entries older than {retention_days} days that have been processed into episodes can be purged.",
+    "retention_days_default": 30
+  },
+
+  "config": {
+    "interval_seconds": {"type": "number", "default": 3, "label": "Poll interval (seconds)"}
+  }
+}

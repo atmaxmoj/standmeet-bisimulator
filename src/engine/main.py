@@ -7,6 +7,7 @@ import logging
 import os
 import threading
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 
@@ -39,6 +40,47 @@ def _start_huey_consumer():
     return consumer
 
 
+def _init_manifest_registry(settings: Settings):
+    """Scan sources directories and register manifest-based sources."""
+    from engine.etl.sources.manifest_registry import (
+        ManifestRegistry, scan_sources_dir, create_table_for_manifest,
+        set_global_registry,
+    )
+    from engine.storage.engine import get_sync_session_factory
+
+    registry = ManifestRegistry()
+
+    sources_dir = os.environ.get("SOURCES_DIR", "")
+    if not sources_dir:
+        # Default: look for sources/builtin/ relative to project root
+        # Try a few common locations
+        for candidate in [
+            Path(__file__).resolve().parent.parent.parent / "sources" / "builtin",
+            Path.cwd() / "sources" / "builtin",
+        ]:
+            if candidate.is_dir():
+                sources_dir = str(candidate)
+                break
+
+    if sources_dir:
+        manifests = scan_sources_dir(Path(sources_dir))
+        if manifests:
+            factory = get_sync_session_factory(settings.database_url_sync)
+            session = factory()
+            try:
+                for m in manifests:
+                    create_table_for_manifest(session, m)
+                    registry.register(m)
+            finally:
+                session.close()
+            logger.info("Registered %d manifest source(s) from %s", len(manifests), sources_dir)
+    else:
+        logger.debug("No SOURCES_DIR configured, skipping manifest source scan")
+
+    set_global_registry(registry)
+    return registry
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = Settings()
@@ -55,6 +97,7 @@ async def lifespan(app: FastAPI):
     app.state.db = db
     app.state.llm = llm
     app.state.settings = settings
+    app.state.manifest_registry = _init_manifest_registry(settings)
 
     _start_huey_consumer()
 

@@ -1,12 +1,18 @@
 """ETL data access — frame loading, episode storage."""
 
+from __future__ import annotations
+
 import json
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from engine.storage.models import Frame as FrameModel, AudioFrame, OsEvent, Episode
 from engine.etl.entities import Frame
+
+if TYPE_CHECKING:
+    from engine.etl.sources.manifest_registry import ManifestRegistry
 
 
 def load_unprocessed_frames(session: Session) -> tuple[list[Frame], list[Frame], list[Frame]]:
@@ -102,6 +108,67 @@ def load_frames(
             for r in rows
         )
 
+    frames.sort(key=lambda f: f.timestamp)
+    return frames
+
+
+def load_unprocessed_source_frames(
+    session: Session,
+    registry: "ManifestRegistry",
+) -> dict[str, list[Frame]]:
+    """Load unprocessed frames from all manifest-based source tables.
+
+    Returns dict mapping source_name -> list of Frame entities.
+    """
+    from sqlalchemy import text
+    result = {}
+    for manifest in registry.all_manifests():
+        if not manifest.db_table:
+            continue
+        source = registry.get_source(manifest.name)
+        cols = ", ".join(source.db_columns())
+        sql = f"SELECT {cols} FROM {manifest.db_table} WHERE processed = 0 ORDER BY timestamp LIMIT 500"
+        rows = session.execute(text(sql)).mappings().all()
+        frames = [source.to_frame(dict(r)) for r in rows]
+        if frames:
+            result[manifest.name] = frames
+    return result
+
+
+def mark_source_processed(
+    session: Session,
+    registry: "ManifestRegistry",
+    source_ids: dict[str, set[int]],
+):
+    """Mark frames as processed in manifest-based source tables."""
+    from sqlalchemy import text
+    for source_name, ids in source_ids.items():
+        if not ids:
+            continue
+        manifest = registry.get_manifest(source_name)
+        placeholders = ",".join(str(i) for i in ids)
+        session.execute(text(f"UPDATE {manifest.db_table} SET processed = 1 WHERE id IN ({placeholders})"))
+    session.commit()
+
+
+def load_source_frames(
+    session: Session,
+    registry: "ManifestRegistry",
+    source_ids: dict[str, list[int]],
+) -> list[Frame]:
+    """Load frames from manifest-based source tables by IDs."""
+    from sqlalchemy import text
+    frames = []
+    for source_name, ids in source_ids.items():
+        if not ids:
+            continue
+        manifest = registry.get_manifest(source_name)
+        source = registry.get_source(source_name)
+        placeholders = ",".join(str(i) for i in ids)
+        cols = ", ".join(source.db_columns())
+        sql = f"SELECT {cols} FROM {manifest.db_table} WHERE id IN ({placeholders}) ORDER BY timestamp"
+        rows = session.execute(text(sql)).mappings().all()
+        frames.extend(source.to_frame(dict(r)) for r in rows)
     frames.sort(key=lambda f: f.timestamp)
     return frames
 

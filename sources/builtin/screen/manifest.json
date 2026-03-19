@@ -1,0 +1,43 @@
+{
+  "name": "screen",
+  "version": "0.1.0",
+  "display_name": "Screen Capture",
+  "description": "Screenshot + OCR of all displays",
+  "author": "builtin",
+  "platform": ["darwin", "win32"],
+  "entrypoint": "screen_source:ScreenSource",
+  "events": {"screen_frame": {"label": "Screen Frame", "color": "blue"}},
+  "db": {
+    "table": "screen_data",
+    "columns": {
+      "timestamp": "text not null",
+      "app_name": "text not null default ''",
+      "window_name": "text not null default ''",
+      "text": "text not null default ''",
+      "display_id": "integer not null default 0",
+      "image_hash": "text not null default ''",
+      "image_path": "text not null default ''",
+      "processed": "integer not null default 0"
+    },
+    "indexes": ["processed", "timestamp"]
+  },
+  "ui": {
+    "icon": "monitor",
+    "visible_columns": ["timestamp", "app_name", "window_name", "text"],
+    "searchable_columns": ["app_name", "window_name", "text"],
+    "detail_columns": ["image_path"]
+  },
+  "context": {
+    "description": "Screenshots with OCR text showing what the user sees on screen",
+    "format": "[{timestamp}] {app_name}/{window_name}[capture]: {text}"
+  },
+  "gc": {
+    "prompt": "Screen frames contain OCR text from screenshots. Frames older than {retention_days} days that have been processed into episodes can be purged. Screenshot images take disk space — consider deleting image files for very old frames.",
+    "retention_days_default": 14
+  },
+  "config": {
+    "interval_seconds": {"type": "number", "default": 3, "label": "Capture interval"},
+    "max_width": {"type": "number", "default": 1024, "label": "Max image width"},
+    "webp_quality": {"type": "number", "default": 80, "label": "WebP quality (0-100)"}
+  }
+}

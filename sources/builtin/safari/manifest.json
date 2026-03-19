@@ -1,0 +1,36 @@
+{
+  "name": "safari",
+  "version": "0.1.0",
+  "display_name": "Safari URLs",
+  "description": "Tracks active Safari tab URLs via AppleScript",
+  "author": "builtin",
+  "platform": ["darwin"],
+  "entrypoint": "safari_source:SafariSource",
+  "events": {"browser_url": {"label": "Browser URL", "color": "blue"}},
+  "db": {
+    "table": "safari_data",
+    "columns": {
+      "timestamp": "text not null",
+      "url": "text not null default ''",
+      "processed": "integer not null default 0"
+    },
+    "indexes": ["processed", "timestamp"]
+  },
+  "ui": {
+    "icon": "globe",
+    "visible_columns": ["timestamp", "url"],
+    "searchable_columns": ["url"],
+    "detail_columns": []
+  },
+  "context": {
+    "description": "URLs the user visited in Safari browser",
+    "format": "[{timestamp}] [safari]: {text}"
+  },
+  "gc": {
+    "prompt": "Safari URL entries older than {retention_days} days can be purged.",
+    "retention_days_default": 30
+  },
+  "config": {
+    "interval_seconds": {"type": "number", "default": 3, "label": "Poll interval (seconds)"}
+  }
+}

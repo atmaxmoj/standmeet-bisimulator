@@ -44,74 +44,83 @@ def _get_session():
 # -- Triggered by ingest: check if pending frames form complete windows --
 
 
+_KNOWN_SOURCES = {"capture", "audio", "os_event"}
+
+
+def _enqueue_window(window: list):
+    """Extract IDs from a window and enqueue process_episode."""
+    screen_ids = [f.id for f in window if f.source == "capture"]
+    audio_ids = [f.id for f in window if f.source == "audio"]
+    os_event_ids = [f.id for f in window if f.source == "os_event"]
+    window_source_ids: dict[str, list[int]] = {}
+    for f in window:
+        if f.source not in _KNOWN_SOURCES:
+            window_source_ids.setdefault(f.source, []).append(f.id)
+    process_episode(screen_ids, audio_ids, os_event_ids, window_source_ids or None)
+
+
+def _mark_all_processed(session, screen_ids, audio_ids, os_ids, source_ids, registry, remainder):
+    """Mark frames as processed, excluding remainder."""
+    from engine.etl.repository import mark_source_processed
+    remainder_ids = {f.id for f in remainder}
+    _mark_processed(session, screen_ids - remainder_ids, audio_ids - remainder_ids, os_ids - remainder_ids)
+    if registry and source_ids:
+        remainder_by_source: dict[str, set[int]] = {}
+        for f in remainder:
+            if f.source not in _KNOWN_SOURCES:
+                remainder_by_source.setdefault(f.source, set()).add(f.id)
+        mark_source_processed(session, registry, {
+            name: ids - remainder_by_source.get(name, set())
+            for name, ids in source_ids.items()
+        })
+
+
 @huey.task()
 @huey.lock_task("pipeline-check")
 def on_new_data():
     """Check unprocessed frames for complete windows. Deduplicated by lock."""
     session = _get_session()
     try:
-        from engine.etl.repository import load_unprocessed_frames
+        from engine.etl.repository import load_unprocessed_frames, load_unprocessed_source_frames
+        from engine.etl.sources.manifest_registry import get_global_registry
         screen_frames, audio_frames, os_frames = load_unprocessed_frames(session)
 
-        if not screen_frames and not audio_frames and not os_frames:
+        registry = get_global_registry()
+        source_frames_dict = load_unprocessed_source_frames(session, registry) if registry else {}
+
+        if not screen_frames and not audio_frames and not os_frames and not source_frames_dict:
             return
 
         all_raw = screen_frames + audio_frames + os_frames
+        for fl in source_frames_dict.values():
+            all_raw.extend(fl)
+
         all_screen_ids = {f.id for f in screen_frames}
         all_audio_ids = {f.id for f in audio_frames}
         all_os_ids = {f.id for f in os_frames}
+        all_source_ids: dict[str, set[int]] = {
+            name: {f.id for f in fl} for name, fl in source_frames_dict.items()
+        }
 
-        # Filter noise + sort
-        kept = sorted(
-            [f for f in all_raw if should_keep(f)],
-            key=lambda f: f.timestamp,
-        )
-        filtered_count = len(all_raw) - len(kept)
+        kept = sorted([f for f in all_raw if should_keep(f)], key=lambda f: f.timestamp)
 
         if not kept:
-            logger.info(
-                "on_new_data: all %d frames filtered as noise (%d screen, %d audio, %d os), marking processed",
-                len(all_raw), len(screen_frames), len(audio_frames), len(os_frames),
-            )
-            _mark_processed(session, all_screen_ids, all_audio_ids, all_os_ids)
+            logger.info("on_new_data: all %d frames filtered as noise, marking processed", len(all_raw))
+            _mark_all_processed(session, all_screen_ids, all_audio_ids, all_os_ids, all_source_ids, registry, [])
             return
 
-        # Detect windows
-        windows, remainder = detect_windows(
-            kept,
-            window_minutes=30,
-            idle_seconds=settings.idle_threshold_seconds,
-        )
+        windows, remainder = detect_windows(kept, window_minutes=30, idle_seconds=settings.idle_threshold_seconds)
 
         if not windows:
-            time_range = f"{kept[0].timestamp} → {kept[-1].timestamp}" if kept else "?"
-            logger.info(
-                "on_new_data: %d frames (%d kept, %d noise), no complete windows. "
-                "Time range: %s, remainder: %d",
-                len(all_raw), len(kept), filtered_count, time_range, len(remainder),
-            )
+            logger.info("on_new_data: %d frames, no complete windows, %d remainder", len(all_raw), len(remainder))
             return
 
-        logger.info(
-            "on_new_data: %d windows from %d frames (%d remainder)",
-            len(windows), len(all_raw), len(remainder),
-        )
+        logger.info("on_new_data: %d windows from %d frames (%d remainder)", len(windows), len(all_raw), len(remainder))
 
-        # Enqueue episode processing
         for window in windows:
-            screen_ids = [f.id for f in window if f.source == "capture"]
-            audio_ids = [f.id for f in window if f.source == "audio"]
-            os_event_ids = [f.id for f in window if f.source == "os_event"]
-            process_episode(screen_ids, audio_ids, os_event_ids)
+            _enqueue_window(window)
 
-        # Mark everything EXCEPT remainder as processed
-        remainder_ids = {f.id for f in remainder}
-        _mark_processed(
-            session,
-            all_screen_ids - remainder_ids,
-            all_audio_ids - remainder_ids,
-            all_os_ids - remainder_ids,
-        )
+        _mark_all_processed(session, all_screen_ids, all_audio_ids, all_os_ids, all_source_ids, registry, remainder)
 
     except Exception:
         logger.exception("on_new_data failed")
@@ -138,21 +147,23 @@ def process_episode(
     screen_ids: list[int],
     audio_ids: list[int],
     os_event_ids: list[int] | None = None,
+    source_ids: dict[str, list[int]] | None = None,
 ):
     """Read frame data from DB, call LLM, store episodes."""
-    if not screen_ids and not audio_ids and not os_event_ids:
+    if not screen_ids and not audio_ids and not os_event_ids and not source_ids:
         return
     session = _get_session()
     try:
         if not check_daily_budget(session, DAILY_COST_CAP_USD):
             logger.warning("process_episode: budget exceeded, skipping")
             return
-        tasks, count = run_episode(_llm, session, screen_ids, audio_ids, os_event_ids)
+        tasks, count = run_episode(_llm, session, screen_ids, audio_ids, os_event_ids, source_ids=source_ids)
         session.commit()
         logger.info("process_episode: %d episodes created", count)
     except Exception:
-        logger.exception("process_episode FAILED (screen=%d, audio=%d, os=%d)",
-                         len(screen_ids), len(audio_ids), len(os_event_ids or []))
+        logger.exception("process_episode FAILED (screen=%d, audio=%d, os=%d, sources=%s)",
+                         len(screen_ids), len(audio_ids), len(os_event_ids or []),
+                         list((source_ids or {}).keys()))
     finally:
         session.close()
 
@@ -241,12 +252,32 @@ Process:
 Output a brief summary of what you did when finished."""
 
 
+def _build_gc_prompt() -> str:
+    """Build GC prompt with manifest source info."""
+    from engine.etl.sources.manifest_registry import get_global_registry
+    registry = get_global_registry()
+    extra = ""
+    if registry:
+        for m in registry.all_manifests():
+            if m.gc:
+                prompt = m.gc.get("prompt", "")
+                if prompt:
+                    retention = m.gc.get("retention_days_default", 14)
+                    try:
+                        extra += f"\n\n### {m.display_name}\n{prompt.format(retention_days=retention)}"
+                    except (KeyError, IndexError):
+                        extra += f"\n\n### {m.display_name}\n{prompt}"
+    if extra:
+        return GC_PROMPT + "\n\n## Source-specific GC guidelines" + extra
+    return GC_PROMPT
+
+
 @huey.periodic_task(crontab(hour="4", minute="0"))
 def daily_gc_task():
     """Daily garbage collection: decay + agent-driven audit. Runs every day at 4am (after distill at 3am)."""
     from engine.pipeline.decay import decay_confidence, decay_routines
     from engine.agents.tools.dedup import make_dedup_tools
-    from engine.agents.tools.audit import make_audit_tools
+    from engine.agents.tools.audit import make_audit_tools, make_manifest_purge_tools
 
     session = _get_session()
     try:
@@ -261,16 +292,17 @@ def daily_gc_task():
         logger.info("daily_gc: decayed %d playbook entries, %d routines", decayed_pb, decayed_rt)
 
         # Phase 2: Agent-driven audit (only if LLM supports tools)
-        gc_tools = make_dedup_tools(session) + make_audit_tools(session)
+        gc_tools = make_dedup_tools(session) + make_audit_tools(session) + make_manifest_purge_tools(session)
         try:
+            gc_prompt = _build_gc_prompt()
             resp = _llm.complete_with_tools(
-                GC_PROMPT, MODEL_DEEP, gc_tools, max_turns=10,
+                gc_prompt, MODEL_DEEP, gc_tools, max_turns=10,
             )
             from engine.storage.sync_db import SyncDB
             cost = resp.cost_usd or 0
             db = SyncDB(session)
             db.record_usage(MODEL_DEEP, "gc", resp.input_tokens, resp.output_tokens, cost)
-            db.insert_pipeline_log("gc", GC_PROMPT, resp.text, MODEL_DEEP, resp.input_tokens, resp.output_tokens, cost)
+            db.insert_pipeline_log("gc", gc_prompt, resp.text, MODEL_DEEP, resp.input_tokens, resp.output_tokens, cost)
             session.commit()
             logger.info("daily_gc: agent audit complete, cost=$%.4f", cost)
         except NotImplementedError:

@@ -2,7 +2,7 @@
 gitleaks protect --staged --verbose || exit 1
 
 # Python: ruff lint
-uv run ruff check src/ capture/src/ audio/src/ cli.py || exit 1
+uv run ruff check src/ cli.py || exit 1
 
 # Python: circular import check (import-linter)
 PYTHONPATH=src uv run lint-imports || exit 1
@@ -10,8 +10,8 @@ PYTHONPATH=src uv run lint-imports || exit 1
 # Python: engine tests
 PYTHONPATH=src uv run pytest tests/ -q || exit 1
 
-# Python: capture tests
-(cd capture && uv run pytest tests/ -q) || exit 1
+# Python: source framework tests
+(cd sources/framework && uv run --extra test pytest tests/ -q) || exit 1
 
 # JS/TS: TypeScript compile check
 (cd web && npx tsc -b) || exit 1

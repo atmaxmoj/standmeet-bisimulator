@@ -132,6 +132,48 @@ def make_audit_tools(session: Session) -> list[ToolDef]:
     ]
 
 
+def make_manifest_purge_tools(session: Session) -> list[ToolDef]:
+    """Generate purge tools for manifest-based sources."""
+    from engine.etl.sources.manifest_registry import get_global_registry
+    from sqlalchemy import text
+
+    registry = get_global_registry()
+    if not registry:
+        return []
+
+    tools = []
+    for manifest in registry.all_manifests():
+        if not manifest.db_table:
+            continue
+        source_name = manifest.name
+        table = manifest.db_table
+
+        def make_purge(sn, tbl):
+            def purge(older_than_days):
+                from engine.storage.session import ago
+                cutoff = ago(days=older_than_days)
+                result = session.execute(text(
+                    f"DELETE FROM {tbl} WHERE processed = 1 AND created_at < :cutoff"
+                ), {"cutoff": cutoff})
+                session.commit()
+                return {"source": sn, "deleted": result.rowcount}
+            return purge
+
+        gc_desc = manifest.gc.get("prompt", f"Purge old {source_name} data") if manifest.gc else f"Purge old {source_name} data"
+        tools.append(ToolDef(
+            name=f"purge_{source_name}",
+            description=f"Delete processed {manifest.display_name} data older than N days. {gc_desc}",
+            input_schema={
+                "type": "object",
+                "properties": {"older_than_days": {"type": "integer"}},
+                "required": ["older_than_days"],
+            },
+            handler=make_purge(source_name, table),
+        ))
+
+    return tools
+
+
 def _record_snapshot(session: Session, name: str, reason: str) -> dict:
     """Wrapper that fetches entry then calls repo."""
     entry = repo.get_playbook_by_name(session, name)

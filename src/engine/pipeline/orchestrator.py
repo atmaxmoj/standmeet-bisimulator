@@ -32,6 +32,7 @@ def run_episode(
     screen_ids: list[int],
     audio_ids: list[int],
     os_event_ids: list[int] | None = None,
+    source_ids: dict[str, list[int]] | None = None,
     prompt: str = EPISODE_PROMPT,
 ) -> tuple[list[dict], int]:
     """Sync episode pipeline: load → build → infer → validate → store.
@@ -39,6 +40,14 @@ def run_episode(
     Returns (tasks, episode_count). Caller must session.commit().
     """
     frames = load_frames(session, screen_ids, audio_ids, os_event_ids)
+    # Also load from manifest sources
+    if source_ids:
+        from engine.etl.sources.manifest_registry import get_global_registry
+        from engine.etl.repository import load_source_frames
+        registry = get_global_registry()
+        if registry:
+            frames.extend(load_source_frames(session, registry, source_ids))
+            frames.sort(key=lambda f: f.timestamp)
     if not frames:
         return [], 0
 

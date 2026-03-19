@@ -1,0 +1,47 @@
+{
+  "name": "bash",
+  "version": "0.1.0",
+  "display_name": "Bash History",
+  "description": "Captures shell commands from bash history file",
+  "author": "builtin",
+  "platform": ["darwin", "win32"],
+  "entrypoint": "bash_source:BashSource",
+
+  "events": {
+    "shell_command": {
+      "label": "Shell Command",
+      "color": "green"
+    }
+  },
+
+  "db": {
+    "table": "bash_data",
+    "columns": {
+      "timestamp": "text not null",
+      "command": "text not null default ''",
+      "processed": "integer not null default 0"
+    },
+    "indexes": ["processed", "timestamp"]
+  },
+
+  "ui": {
+    "icon": "terminal",
+    "visible_columns": ["timestamp", "command"],
+    "searchable_columns": ["command"],
+    "detail_columns": []
+  },
+
+  "context": {
+    "description": "Shell commands the user executed in bash terminal",
+    "format": "[{timestamp}] [bash]: {command}"
+  },
+
+  "gc": {
+    "prompt": "Bash history entries older than {retention_days} days that have been processed into episodes can be purged.",
+    "retention_days_default": 30
+  },
+
+  "config": {
+    "interval_seconds": {"type": "number", "default": 3, "label": "Poll interval (seconds)"}
+  }
+}

@@ -1,0 +1,15 @@
+[project]
+name = "observer-source-bash"
+version = "0.1.0"
+description = "Bash shell history source plugin for Observer"
+requires-python = ">=3.12"
+dependencies = [
+    "source-framework",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bash_source"]

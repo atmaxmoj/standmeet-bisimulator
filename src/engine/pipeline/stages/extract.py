@@ -17,10 +17,34 @@ logger = logging.getLogger(__name__)
 
 
 def build_context(frames: list[Frame]) -> str:
-    """Build the text context from a list of frames (capture + audio + os_event)."""
+    """Build the text context from a list of frames (capture + audio + os_event + manifest sources)."""
+    from engine.etl.sources.manifest_registry import get_global_registry
+
+    registry = get_global_registry()
+
     lines = []
     for f in frames:
         text = f.text[:300].replace("\n", " ")
+
+        # Try manifest-based formatting first
+        if registry and registry.has(f.source):
+            manifest = registry.get_manifest(f.source)
+            fmt = manifest.context_format
+            if fmt:
+                try:
+                    lines.append(fmt.format(
+                        timestamp=f.timestamp,
+                        app_name=f.app_name,
+                        window_name=f.window_name,
+                        text=text,
+                        source=f.source,
+                        command=f.text[:300].replace("\n", " "),
+                    ))
+                    continue
+                except (KeyError, IndexError):
+                    pass
+
+        # Fallback: original format
         source_tag = f"[{f.source}]" if f.source != "screenpipe" else ""
         lines.append(f"[{f.timestamp}] {f.app_name}/{f.window_name}{source_tag}: {text}")
     return "\n".join(lines)

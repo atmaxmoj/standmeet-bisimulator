@@ -1,20 +1,15 @@
-import { useState, useEffect, type ComponentType } from "react";
+import { useState, useEffect, useMemo, type ComponentType } from "react";
 import { Button } from "@/components/ui/button";
-import { FramesPanel } from "@/components/FramesPanel";
-import { AudioPanel } from "@/components/AudioPanel";
 import { EpisodesPanel } from "@/components/EpisodesPanel";
 import { PlaybooksPanel } from "@/components/PlaybooksPanel";
 import { RoutinesPanel } from "@/components/RoutinesPanel";
 import { UsagePanel } from "@/components/UsagePanel";
 import { LogsPanel } from "@/components/LogsPanel";
-import { OsEventsPanel } from "@/components/OsEventsPanel";
 import { ManagePanel } from "@/components/ManagePanel";
-import { api } from "@/lib/api";
+import { SourceDataPanel } from "@/components/SourceDataPanel";
+import { api, type SourceManifest } from "@/lib/api";
 
-const panels: Record<string, ComponentType> = {
-  frames: FramesPanel,
-  audio: AudioPanel,
-  os_events: OsEventsPanel,
+const staticPanels: Record<string, ComponentType> = {
   episodes: EpisodesPanel,
   playbooks: PlaybooksPanel,
   routines: RoutinesPanel,
@@ -23,31 +18,16 @@ const panels: Record<string, ComponentType> = {
   chat: ManagePanel,
 };
 
-const sidebarGroups: { label: string; items: { key: string; label: string }[] }[] = [
-  {
-    label: "Capture",
-    items: [
-      { key: "frames", label: "Frames" },
-      { key: "audio", label: "Audio" },
-      { key: "os_events", label: "OS Events" },
-    ],
-  },
-  {
-    label: "Memory",
-    items: [
-      { key: "episodes", label: "Episodes" },
-      { key: "playbooks", label: "Playbooks" },
-      { key: "routines", label: "Routines" },
-    ],
-  },
-  {
-    label: "System",
-    items: [
-      { key: "usage", label: "Usage" },
-      { key: "logs", label: "Logs" },
-      { key: "chat", label: "Manage" },
-    ],
-  },
+const memorySidebarItems = [
+  { key: "episodes", label: "Episodes" },
+  { key: "playbooks", label: "Playbooks" },
+  { key: "routines", label: "Routines" },
+];
+
+const systemSidebarItems = [
+  { key: "usage", label: "Usage" },
+  { key: "logs", label: "Logs" },
+  { key: "chat", label: "Manage" },
 ];
 
 function PipelineToggle({ online, captureAlive, paused, toggling, onToggle }: {
@@ -126,8 +106,40 @@ function Header() {
 }
 
 export default function App() {
-  const [active, setActive] = useState("frames");
-  const Panel = panels[active];
+  const [active, setActive] = useState("episodes");
+  const [sources, setSources] = useState<SourceManifest[]>([]);
+
+  const sourceManifestMap = useMemo(
+    () => new Map(sources.map(s => [`source:${s.name}`, s])),
+    [sources],
+  );
+
+  useEffect(() => {
+    api.sources().then(data => setSources(data.sources)).catch(() => {});
+  }, []);
+
+  // When sources load, set active to first source if no active selection yet
+  useEffect(() => {
+    if (sources.length > 0 && !sourceManifestMap.has(active) && !staticPanels[active]) {
+      setActive(`source:${sources[0].name}`);
+    }
+  }, [sources, sourceManifestMap, active]);
+
+  const captureSidebarItems = sources.map(s => ({ key: `source:${s.name}`, label: s.display_name }));
+
+  const sidebarGroups = [
+    ...(captureSidebarItems.length > 0 ? [{ label: "Sources", items: captureSidebarItems }] : []),
+    { label: "Memory", items: memorySidebarItems },
+    { label: "System", items: systemSidebarItems },
+  ];
+
+  const renderPanel = () => {
+    const manifest = sourceManifestMap.get(active);
+    if (manifest) return <SourceDataPanel manifest={manifest} />;
+    const StaticPanel = staticPanels[active];
+    if (StaticPanel) return <StaticPanel />;
+    return <p className="p-6 text-muted-foreground">Select a panel</p>;
+  };
 
   return (
     <div className="h-screen flex flex-col bg-background text-foreground">
@@ -152,7 +164,7 @@ export default function App() {
           ))}
         </aside>
         <main className="flex-1 overflow-y-auto">
-          <Panel />
+          {renderPanel()}
         </main>
       </div>
     </div>

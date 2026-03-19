@@ -152,6 +152,51 @@ def daemon_stop(name: str):
     _kill_stale_processes(name)
 
 
+def daemon_start_source(name: str, source_dir: Path):
+    """Start a source plugin as an independent daemon process."""
+    pid = daemon_running(f"source-{name}")
+    if pid:
+        print(f"  source/{name} already running (pid {pid})")
+        return
+
+    PID_DIR.mkdir(parents=True, exist_ok=True)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    log = _log_file(f"source-{name}")
+
+    print(f"  Starting source/{name}...")
+    framework_dir = ROOT / "sources" / "framework"
+    with open(log, "w") as lf:
+        kwargs = dict(
+            cwd=framework_dir,
+            stdout=lf, stderr=lf,
+            env={**os.environ, "PYTHONPATH": str(framework_dir / "src")},
+        )
+        if sys.platform == "win32":
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+        else:
+            kwargs["start_new_session"] = True
+        p = subprocess.Popen(
+            ["uv", "run", "python", "-m", "source_framework", str(source_dir)],
+            **kwargs,
+        )
+
+    _pid_file(f"source-{name}").write_text(str(p.pid))
+    print(f"  source/{name} started (pid {p.pid}) → {log}")
+
+
+def _iter_source_manifests():
+    """Yield (source_name, source_dir, manifest) for each builtin source with a manifest."""
+    import json
+    sources_dir = ROOT / "sources" / "builtin"
+    if not sources_dir.is_dir():
+        return
+    for source_dir in sorted(sources_dir.iterdir()):
+        manifest_file = source_dir / "manifest.json"
+        if manifest_file.exists():
+            manifest = json.loads(manifest_file.read_text())
+            yield manifest["name"], source_dir, manifest
+
+
 # ── Commands ──────────────────────────────────────────────────────────
 
 
@@ -170,13 +215,8 @@ def cmd_setup():
         else:
             sys.exit("ERROR: No .env or .env.example found. Create .env with ANTHROPIC_API_KEY=sk-ant-...")
 
-    extra = platform_extra()
-    if extra:
-        print(f"==> Installing capture daemon ({extra})...")
-        run(["uv", "sync", "--extra", extra], cwd=ROOT / "capture")
-
-    print("==> Installing audio daemon...")
-    run(["uv", "sync"], cwd=ROOT / "audio")
+    print("==> Installing source framework...")
+    run(["uv", "sync"], cwd=ROOT / "sources" / "framework")
 
     print("==> Building Docker images...")
     run(["docker", "compose", "build"], cwd=ROOT)
@@ -184,58 +224,24 @@ def cmd_setup():
     print("\n==> Setup complete! Run: npm start")
 
 
-def check_macos_permissions():
-    """On macOS, verify screen recording + microphone permissions."""
-    if sys.platform != "darwin":
-        return
-
-    # Screen recording: try a test capture
-    try:
-        result = subprocess.run(
-            ["uv", "run", "python", "-c",
-             "from capture.backends.macos import check_screen_recording_permission; "
-             "import sys; sys.exit(0 if check_screen_recording_permission() else 1)"],
-            cwd=ROOT / "capture", capture_output=True, text=True, timeout=10,
-        )
-        if result.returncode != 0:
-            print("  !! Screen recording permission DENIED")
-            print("  !! Go to System Settings → Privacy & Security → Screen Recording")
-            print("  !! Enable access for Terminal (or your terminal app), then restart")
-            sys.exit(1)
-        print("  Screen recording permission: OK")
-    except Exception as e:
-        print(f"  !! Could not check screen recording permission: {e}")
-
-    # Microphone: try opening a stream
-    try:
-        result = subprocess.run(
-            ["uv", "run", "python", "-c",
-             "import sounddevice as sd; "
-             "s = sd.InputStream(samplerate=16000, channels=1); s.start(); s.stop(); s.close(); "
-             "print('OK')"],
-            cwd=ROOT / "audio", capture_output=True, text=True, timeout=10,
-        )
-        if result.returncode != 0 or "OK" not in result.stdout:
-            print("  !! Microphone permission DENIED")
-            print("  !! Go to System Settings → Privacy & Security → Microphone")
-            print("  !! Enable access for Terminal (or your terminal app), then restart")
-            sys.exit(1)
-        print("  Microphone permission: OK")
-    except Exception as e:
-        print(f"  !! Could not check microphone permission: {e}")
-
-
 def cmd_start():
     print("==> Starting observer...")
     check_prereqs()
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-    extra = platform_extra()
-    if extra:
-        print("==> Checking permissions...")
-        check_macos_permissions()
-        daemon_start("capture", ROOT / "capture")
-    daemon_start("audio", ROOT / "audio")
+    # Start source plugins
+    # screen and audio sources can't run independently yet (need backend migration)
+    LEGACY_SOURCES = {"screen", "audio"}
+    print("==> Starting source plugins...")
+    for source_name, source_dir, manifest in _iter_source_manifests():
+        if source_name in LEGACY_SOURCES:
+            print(f"  Skipping source/{source_name} (uses legacy daemon)")
+            continue
+        platforms = manifest.get("platform", [])
+        if platforms and sys.platform not in platforms:
+            print(f"  Skipping {source_name} (platform {sys.platform} not in {platforms})")
+            continue
+        daemon_start_source(source_name, source_dir)
 
     print("==> Building + starting engine + web containers...")
     run(["docker", "compose", "up", "-d", "--build"], cwd=ROOT)
@@ -247,17 +253,19 @@ def cmd_start():
 
 def cmd_stop():
     print("==> Stopping observer...")
-    daemon_stop("capture")
-    daemon_stop("audio")
+    # Stop source plugin daemons
+    for source_name, _source_dir, _manifest in _iter_source_manifests():
+        daemon_stop(f"source-{source_name}")
     run(["docker", "compose", "down"], cwd=ROOT)
     print("==> Stopped")
 
 
 def cmd_status():
-    for name in ("capture", "audio"):
-        pid = daemon_running(name)
+    # Source plugins
+    for source_name, _source_dir, _manifest in _iter_source_manifests():
+        pid = daemon_running(f"source-{source_name}")
         status = f"RUNNING (pid {pid})" if pid else "NOT RUNNING"
-        print(f"  {name}: {status}")
+        print(f"  source/{source_name}: {status}")
 
     db = DATA_DIR / "capture.db"
     if db.exists():
@@ -301,18 +309,11 @@ def cmd_test():
             sys.exit(1)
     print("==> All code checks passed\n")
 
-    extra = platform_extra()
-
-    if suite in ("capture", "all") and extra:
-        print("==> Running capture pytest...")
-        r = run(["uv", "run", "--extra", extra, "--extra", "test", "pytest", "-v"],
-                cwd=ROOT / "capture")
-        results.append(("capture", r.returncode))
-
-    if suite in ("audio", "all"):
-        print("\n==> Running audio pytest...")
-        r = run(["uv", "run", "--extra", "test", "pytest", "-v"], cwd=ROOT / "audio")
-        results.append(("audio", r.returncode))
+    if suite in ("sources", "all"):
+        print("\n==> Running source framework tests...")
+        r = run(["uv", "run", "--extra", "test", "pytest", "-v"],
+                cwd=ROOT / "sources" / "framework")
+        results.append(("sources", r.returncode))
 
     results_dir = ROOT / "tests" / "results"
     results_dir.mkdir(parents=True, exist_ok=True)
@@ -359,7 +360,7 @@ def cmd_test():
             print(f"  See {web_log}")
 
     if not results:
-        print(f"Unknown suite: {suite}. Available: capture, audio, web, all")
+        print(f"Unknown suite: {suite}. Available: capture, audio, sources, engine, web, all")
         sys.exit(1)
 
     failed = [name for name, rc in results if rc != 0]
@@ -429,31 +430,74 @@ def _plist_path(name: str) -> Path:
     return Path.home() / "Library" / "LaunchAgents" / f"com.observer.{name}.plist"
 
 
+def _launchd_plist_source(name: str, source_dir: Path) -> str:
+    """Generate a launchd plist for a source plugin daemon."""
+    uv_path = shutil.which("uv") or "/usr/local/bin/uv"
+    label = f"com.observer.source-{name}"
+    log = str(LOG_DIR / f"source-{name}.log")
+    framework_dir = ROOT / "sources" / "framework"
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{label}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{uv_path}</string>
+        <string>run</string>
+        <string>python</string>
+        <string>-m</string>
+        <string>source_framework</string>
+        <string>{source_dir}</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>{framework_dir}</string>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>StandardOutPath</key>
+    <string>{log}</string>
+    <key>StandardErrorPath</key>
+    <string>{log}</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>{os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")}</string>
+        <key>PYTHONPATH</key>
+        <string>{framework_dir / "src"}</string>
+    </dict>
+</dict>
+</plist>"""
+
+
 def cmd_watchdog():
-    """Install launchd plists for capture + audio with KeepAlive auto-restart."""
+    """Install launchd plists for source plugins with KeepAlive auto-restart."""
     if sys.platform != "darwin":
         sys.exit("launchd watchdog is macOS only")
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Stop old PID-based daemons first
-    for name in ("capture", "audio"):
-        daemon_stop(name)
+    LEGACY_SOURCES = {"screen", "audio"}
 
-    daemons = [
-        ("capture", ROOT / "capture"),
-        ("audio", ROOT / "audio"),
-    ]
-
-    for name, cwd in daemons:
-        plist_dst = _plist_path(name)
+    # Source plugins
+    for source_name, source_dir, manifest in _iter_source_manifests():
+        platforms = manifest.get("platform", [])
+        if source_name in LEGACY_SOURCES:
+            print(f"  Skipping source/{source_name} (legacy dependency)")
+            continue
+        if platforms and sys.platform not in platforms:
+            print(f"  Skipping source/{source_name} (platform {sys.platform} not in {platforms})")
+            continue
+        daemon_stop(f"source-{source_name}")
+        plist_dst = _plist_path(f"source-{source_name}")
         plist_dst.parent.mkdir(parents=True, exist_ok=True)
-        plist_dst.write_text(_launchd_plist(name, cwd))
-        # Unload first (ignore errors if not loaded)
+        plist_dst.write_text(_launchd_plist_source(source_name, source_dir))
         run(["launchctl", "unload", str(plist_dst)], capture_output=True)
         run(["launchctl", "load", str(plist_dst)])
-        print(f"  {name}: installed + loaded ({plist_dst})")
+        print(f"  source/{source_name}: installed + loaded ({plist_dst})")
 
     print("\n  Daemons will auto-restart on crash.")
     print("  Use the dashboard toggle to pause/resume capture.")
@@ -465,14 +509,23 @@ def cmd_watchdog_off():
     if sys.platform != "darwin":
         sys.exit("launchd watchdog is macOS only")
 
+    # Unload legacy plists if they exist
     for name in ("capture", "audio"):
         plist = _plist_path(name)
         if plist.exists():
             run(["launchctl", "unload", str(plist)], capture_output=True)
             plist.unlink()
             print(f"  {name}: unloaded + removed")
+
+    # Source plugins
+    for source_name, _source_dir, _manifest in _iter_source_manifests():
+        plist = _plist_path(f"source-{source_name}")
+        if plist.exists():
+            run(["launchctl", "unload", str(plist)], capture_output=True)
+            plist.unlink()
+            print(f"  source/{source_name}: unloaded + removed")
         else:
-            print(f"  {name}: not installed")
+            print(f"  source/{source_name}: not installed")
 
 
 def cmd_experiment():

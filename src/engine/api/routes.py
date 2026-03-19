@@ -1,10 +1,10 @@
-"""Ingest API (capture/audio push data here) + query endpoints + engine management."""
+"""Ingest API (source plugins push data here) + query endpoints + engine management."""
 
 import logging
 from pathlib import Path
 
 from fastapi import APIRouter, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -21,135 +21,118 @@ def _notify_pipeline():
 router = APIRouter()
 
 
-# -- Ingest models --
-
-
-class FrameIngest(BaseModel):
-    timestamp: str
-    app_name: str = ""
-    window_name: str = ""
-    text: str = ""
-    display_id: int = 0
-    image_hash: str = ""
-    image_path: str = ""
-
-
-class AudioFrameIngest(BaseModel):
-    timestamp: str
-    duration_seconds: float = 0.0
-    text: str = ""
-    language: str = ""
-    source: str = "mic"
-    chunk_path: str = ""
-
-
-class OsEventIngest(BaseModel):
-    timestamp: str
-    event_type: str
-    source: str = ""
-    data: str = ""
-
-
-# -- Ingest endpoints (capture/audio daemons POST here) --
-
-
 async def _is_paused(db) -> bool:
     return bool(await db.get_state("pipeline_paused", 0))
 
 
-@router.post("/ingest/frame")
-async def ingest_frame(request: Request, body: FrameIngest):
+# -- Unified ingest for manifest-based sources --
+
+
+@router.post("/ingest/{source_name}")
+async def ingest_source(request: Request, source_name: str):
+    """Unified ingest endpoint for manifest-based source plugins.
+
+    Each source posts records matching its manifest db.columns.
+    Falls through to 404 if source_name is not a registered manifest source.
+    """
+    from engine.etl.sources.manifest_registry import insert_record
+    from engine.storage.engine import get_sync_session_factory
+
+    registry = request.app.state.manifest_registry
+    if not registry.has(source_name):
+        return JSONResponse({"error": f"Unknown source: {source_name}"}, status_code=404)
+
     db = request.app.state.db
     if await _is_paused(db):
         return {"id": None, "paused": True}
-    row_id = await db.insert_frame(
-        timestamp=body.timestamp,
-        app_name=body.app_name,
-        window_name=body.window_name,
-        text=body.text,
-        display_id=body.display_id,
-        image_hash=body.image_hash,
-        image_path=body.image_path,
-    )
+
+    body = await request.json()
+    manifest = registry.get_manifest(source_name)
+    settings = request.app.state.settings
+    factory = get_sync_session_factory(settings.database_url_sync)
+    session = factory()
+    try:
+        row_id = insert_record(session, manifest, body)
+    finally:
+        session.close()
+
     _notify_pipeline()
     return {"id": row_id}
 
 
-@router.post("/ingest/audio")
-async def ingest_audio(request: Request, body: AudioFrameIngest):
-    db = request.app.state.db
-    if await _is_paused(db):
-        return {"id": None, "paused": True}
-    row_id = await db.insert_audio_frame(
-        timestamp=body.timestamp,
-        duration_seconds=body.duration_seconds,
-        text=body.text,
-        language=body.language,
-        source=body.source,
-        chunk_path=body.chunk_path,
-    )
-    _notify_pipeline()
-    return {"id": row_id}
+# -- Source plugin metadata --
 
 
-@router.post("/ingest/os-event")
-async def ingest_os_event(request: Request, body: OsEventIngest):
-    db = request.app.state.db
-    if await _is_paused(db):
-        return {"id": None, "paused": True}
-    row_id = await db.insert_os_event(
-        timestamp=body.timestamp,
-        event_type=body.event_type,
-        source=body.source,
-        data=body.data,
-    )
-    return {"id": row_id}
+@router.get("/engine/sources")
+async def list_sources(request: Request):
+    """Return all registered manifest-based sources (for frontend dynamic rendering)."""
+    registry = request.app.state.manifest_registry
+    return {
+        "sources": [m.raw for m in registry.all_manifests()]
+    }
 
 
-# -- Query endpoints --
-
-
-@router.get("/capture/frames")
-async def list_capture_frames(request: Request, limit: int = 50, offset: int = 0, search: str = ""):
-    db = request.app.state.db
-    frames, total = await db.get_frames(limit=limit, offset=offset, search=search)
-    return {"frames": frames, "total": total}
-
-
-@router.get("/capture/audio")
-async def list_audio_frames(request: Request, limit: int = 50, offset: int = 0, search: str = ""):
-    db = request.app.state.db
-    audio, total = await db.get_audio_frames(limit=limit, offset=offset, search=search)
-    return {"audio": audio, "total": total}
-
-
-@router.get("/capture/os-events")
-async def list_os_events(
+@router.get("/sources/{source_name}/data")
+async def query_source_data(
     request: Request,
+    source_name: str,
     limit: int = 50,
     offset: int = 0,
-    event_type: str = "",
     search: str = "",
 ):
-    db = request.app.state.db
-    events, total = await db.get_os_events(limit=limit, offset=offset, event_type=event_type, search=search)
-    return {"events": events, "total": total}
+    """Unified query endpoint for manifest-based source data."""
+    from engine.etl.sources.manifest_registry import query_records
+    from engine.storage.engine import get_sync_session_factory
+
+    registry = request.app.state.manifest_registry
+    if not registry.has(source_name):
+        return {"error": f"Unknown source: {source_name}"}
+
+    manifest = registry.get_manifest(source_name)
+    settings = request.app.state.settings
+    factory = get_sync_session_factory(settings.database_url_sync)
+    session = factory()
+    try:
+        records, total = query_records(session, manifest, limit=limit, offset=offset, search=search)
+    finally:
+        session.close()
+
+    return {"records": records, "total": total}
 
 
-# -- Frame images --
+# -- Source record image serving --
 
 
-@router.get("/capture/frames/{frame_id}/image")
-async def get_frame_image(request: Request, frame_id: int):
-    """Serve a frame's compressed screenshot."""
-    db = request.app.state.db
-    image_path = await db.get_frame_image_path(frame_id)
+@router.get("/sources/{source_name}/records/{record_id}/image")
+async def get_source_record_image(request: Request, source_name: str, record_id: int):
+    """Serve an image from a source record's image_path column."""
+    from engine.storage.engine import get_sync_session_factory
 
-    if not image_path:
+    registry = request.app.state.manifest_registry
+    if not registry.has(source_name):
+        return {"error": f"Unknown source: {source_name}"}
+
+    manifest = registry.get_manifest(source_name)
+    if "image_path" not in manifest.db_columns:
+        return {"error": f"Source {source_name} has no image_path column"}
+
+    settings = request.app.state.settings
+    factory = get_sync_session_factory(settings.database_url_sync)
+    session = factory()
+    try:
+        from sqlalchemy import text as sql_text
+        row = session.execute(
+            sql_text(f"SELECT image_path FROM {manifest.db_table} WHERE id = :id"),
+            {"id": record_id},
+        ).one_or_none()
+    finally:
+        session.close()
+
+    if not row or not row[0]:
         return {"error": "no image"}
 
+    image_path = row[0]
     frames_base_dir = request.app.state.settings.frames_base_dir
-    # image_path is like "frames/2026-03-14/123456_d1.webp"
     file_path = Path(frames_base_dir).parent / image_path
     if not file_path.exists():
         return {"error": "file not found"}
@@ -368,106 +351,92 @@ async def trigger_gc(request: Request):
     return {"status": "completed"}
 
 
+def _backfill_set_processed(session, registry, value: int):
+    """Set processed flag on all tables (legacy + manifest)."""
+    from sqlalchemy import update, text
+    from engine.storage.models import Frame as FrameModel, AudioFrame, OsEvent
+    session.execute(update(FrameModel).values(processed=value))
+    session.execute(update(AudioFrame).values(processed=value))
+    session.execute(update(OsEvent).values(processed=value))
+    if registry:
+        for m in registry.all_manifests():
+            if m.db_table:
+                session.execute(text(f"UPDATE {m.db_table} SET processed = {value}"))
+    session.commit()
+
+
+def _backfill_load_all(session, registry):
+    """Load all frames from legacy + manifest tables."""
+    from sqlalchemy import select, text
+    from engine.etl.entities import Frame
+    from engine.storage.models import Frame as FrameModel, AudioFrame, OsEvent
+
+    all_raw = []
+    for r in session.execute(select(FrameModel).order_by(FrameModel.timestamp)).scalars():
+        all_raw.append(Frame(id=r.id, source="capture", text=r.text or "",
+                             app_name=r.app_name or "", window_name=r.window_name or "",
+                             timestamp=r.timestamp or "", image_path=r.image_path or ""))
+    for r in session.execute(select(AudioFrame).order_by(AudioFrame.timestamp)).scalars():
+        all_raw.append(Frame(id=r.id, source="audio", text=r.text or "",
+                             app_name="microphone", window_name=f"audio/{r.language or 'unknown'}",
+                             timestamp=r.timestamp or ""))
+    for r in session.execute(select(OsEvent).order_by(OsEvent.timestamp)).scalars():
+        all_raw.append(Frame(id=r.id, source="os_event", text=r.data or "",
+                             app_name=r.event_type or "", window_name=r.source or "",
+                             timestamp=r.timestamp or ""))
+    if registry:
+        for manifest in registry.all_manifests():
+            if not manifest.db_table:
+                continue
+            source = registry.get_source(manifest.name)
+            cols = ", ".join(source.db_columns())
+            rows = session.execute(text(f"SELECT {cols} FROM {manifest.db_table} ORDER BY timestamp")).mappings()
+            all_raw.extend(source.to_frame(dict(r)) for r in rows)
+    return all_raw
+
+
 @router.post("/engine/backfill")
 async def backfill(request: Request):
-    """Reset all frames to unprocessed and re-trigger pipeline.
-
-    This reads ALL frames, runs detect_windows (ignoring recency),
-    and enqueues process_episode for each window.
-    """
-    from sqlalchemy import select, update
+    """Reset all frames to unprocessed and re-trigger pipeline."""
     from engine.config import Settings
-    from engine.etl.entities import Frame
     from engine.etl.filter import should_keep, detect_windows
+    from engine.etl.sources.manifest_registry import get_global_registry
     from engine.scheduler.tasks import process_episode
     from engine.storage.engine import get_sync_session_factory
-    from engine.storage.models import Frame as FrameModel, AudioFrame, OsEvent
 
     settings = Settings()
     factory = get_sync_session_factory(settings.database_url_sync)
     session = factory()
+    registry = get_global_registry()
 
-    # Reset all to unprocessed
-    session.execute(update(FrameModel).values(processed=0))
-    session.execute(update(AudioFrame).values(processed=0))
-    session.execute(update(OsEvent).values(processed=0))
-    session.commit()
+    _backfill_set_processed(session, registry, 0)
+    all_raw = _backfill_load_all(session, registry)
 
-    # Read ALL data sources
-    screen_rows = session.execute(
-        select(FrameModel).order_by(FrameModel.timestamp)
-    ).scalars().all()
-    screen_frames = [
-        Frame(
-            id=r.id, source="capture",
-            text=r.text or "", app_name=r.app_name or "",
-            window_name=r.window_name or "",
-            timestamp=r.timestamp or "",
-            image_path=r.image_path or "",
-        )
-        for r in screen_rows
-    ]
-
-    audio_rows = session.execute(
-        select(AudioFrame).order_by(AudioFrame.timestamp)
-    ).scalars().all()
-    audio_frames = [
-        Frame(
-            id=r.id, source="audio",
-            text=r.text or "", app_name="microphone",
-            window_name=f"audio/{r.language or 'unknown'}",
-            timestamp=r.timestamp or "",
-        )
-        for r in audio_rows
-    ]
-
-    os_rows = session.execute(
-        select(OsEvent).order_by(OsEvent.timestamp)
-    ).scalars().all()
-    os_event_frames = [
-        Frame(
-            id=r.id, source="os_event",
-            text=r.data or "", app_name=r.event_type or "",
-            window_name=r.source or "",
-            timestamp=r.timestamp or "",
-        )
-        for r in os_rows
-    ]
-
-    all_raw = screen_frames + audio_frames + os_event_frames
-    kept = sorted(
-        [f for f in all_raw if should_keep(f)],
-        key=lambda f: f.timestamp,
-    )
+    kept = sorted([f for f in all_raw if should_keep(f)], key=lambda f: f.timestamp)
 
     if not kept:
-        session.execute(update(FrameModel).values(processed=1))
-        session.execute(update(AudioFrame).values(processed=1))
-        session.execute(update(OsEvent).values(processed=1))
-        session.commit()
+        _backfill_set_processed(session, registry, 1)
         session.close()
         return {"windows": 0, "message": "All frames filtered as noise"}
 
-    # Use normal idle threshold, but force-close the last group
-    # (backfill treats everything as "old enough")
     windows, remainder = detect_windows(kept, window_minutes=30, idle_seconds=300)
     if remainder:
         windows.append(remainder)
 
-    # Enqueue each window
+    known_sources = {"capture", "audio", "os_event"}
     enqueued = 0
     for window in windows:
         screen_ids = [f.id for f in window if f.source == "capture"]
         audio_ids = [f.id for f in window if f.source == "audio"]
         os_event_ids = [f.id for f in window if f.source == "os_event"]
-        process_episode(screen_ids, audio_ids, os_event_ids)
+        window_source_ids: dict[str, list[int]] = {}
+        for f in window:
+            if f.source not in known_sources:
+                window_source_ids.setdefault(f.source, []).append(f.id)
+        process_episode(screen_ids, audio_ids, os_event_ids, window_source_ids or None)
         enqueued += 1
 
-    # Mark all as processed
-    session.execute(update(FrameModel).values(processed=1))
-    session.execute(update(AudioFrame).values(processed=1))
-    session.execute(update(OsEvent).values(processed=1))
-    session.commit()
+    _backfill_set_processed(session, registry, 1)
     session.close()
 
     logger.info("backfill: enqueued %d windows from %d frames", enqueued, len(all_raw))

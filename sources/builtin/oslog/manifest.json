@@ -1,0 +1,43 @@
+{
+  "name": "oslog",
+  "version": "0.1.0",
+  "display_name": "macOS System Log",
+  "description": "Streams macOS os_log events (app launch/quit, sleep/wake, lock/unlock)",
+  "author": "builtin",
+  "platform": ["darwin"],
+  "entrypoint": "oslog_source:OsLogSource",
+  "events": {
+    "app_launch": {"label": "App Launch", "color": "green"},
+    "app_quit": {"label": "App Quit", "color": "red"},
+    "frontmost_change": {"label": "Frontmost Change", "color": "blue"},
+    "sleep": {"label": "Sleep", "color": "gray"},
+    "wake": {"label": "Wake", "color": "gray"},
+    "lock": {"label": "Lock", "color": "orange"},
+    "unlock": {"label": "Unlock", "color": "orange"}
+  },
+  "db": {
+    "table": "oslog_data",
+    "columns": {
+      "timestamp": "text not null",
+      "category": "text not null default ''",
+      "data": "text not null default ''",
+      "processed": "integer not null default 0"
+    },
+    "indexes": ["processed", "timestamp", "category"]
+  },
+  "ui": {
+    "icon": "activity",
+    "visible_columns": ["timestamp", "category", "data"],
+    "searchable_columns": ["category", "data"],
+    "detail_columns": []
+  },
+  "context": {
+    "description": "macOS system events (app launches, sleep/wake, lock/unlock)",
+    "format": "[{timestamp}] [oslog/{app_name}]: {text}"
+  },
+  "gc": {
+    "prompt": "OS log entries older than {retention_days} days can be purged.",
+    "retention_days_default": 14
+  },
+  "config": {}
+}

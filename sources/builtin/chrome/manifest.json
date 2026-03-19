@@ -1,0 +1,36 @@
+{
+  "name": "chrome",
+  "version": "0.1.0",
+  "display_name": "Chrome URLs",
+  "description": "Tracks active Chrome tab URLs via AppleScript (macOS)",
+  "author": "builtin",
+  "platform": ["darwin"],
+  "entrypoint": "chrome_source:ChromeSource",
+  "events": {"browser_url": {"label": "Browser URL", "color": "yellow"}},
+  "db": {
+    "table": "chrome_data",
+    "columns": {
+      "timestamp": "text not null",
+      "url": "text not null default ''",
+      "processed": "integer not null default 0"
+    },
+    "indexes": ["processed", "timestamp"]
+  },
+  "ui": {
+    "icon": "globe",
+    "visible_columns": ["timestamp", "url"],
+    "searchable_columns": ["url"],
+    "detail_columns": []
+  },
+  "context": {
+    "description": "URLs the user visited in Chrome browser",
+    "format": "[{timestamp}] [chrome]: {text}"
+  },
+  "gc": {
+    "prompt": "Chrome URL entries older than {retention_days} days can be purged.",
+    "retention_days_default": 30
+  },
+  "config": {
+    "interval_seconds": {"type": "number", "default": 3, "label": "Poll interval (seconds)"}
+  }
+}

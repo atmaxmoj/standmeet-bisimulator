@@ -1,0 +1,13 @@
+[project]
+name = "observer-source-safari"
+version = "0.1.0"
+description = "Safari browser URL tracking source plugin for Observer"
+requires-python = ">=3.12"
+dependencies = ["source-framework"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/safari_source"]

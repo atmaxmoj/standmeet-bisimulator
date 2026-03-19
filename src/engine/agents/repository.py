@@ -413,6 +413,22 @@ def get_data_stats(session: Session) -> dict:
             stats[name] = {"total": total, "processed": processed, "unprocessed": total - processed}
         else:
             stats[name] = {"total": total}
+
+    # Add manifest source stats
+    from engine.etl.sources.manifest_registry import get_global_registry
+    from sqlalchemy import text as sa_text
+    registry = get_global_registry()
+    if registry:
+        for manifest in registry.all_manifests():
+            if not manifest.db_table:
+                continue
+            try:
+                total = session.execute(sa_text(f"SELECT COUNT(*) FROM {manifest.db_table}")).scalar()
+                processed = session.execute(sa_text(f"SELECT COUNT(*) FROM {manifest.db_table} WHERE processed = 1")).scalar()
+                stats[manifest.db_table] = {"total": total, "processed": processed, "unprocessed": total - processed}
+            except Exception:
+                pass  # Table may not exist yet
+
     return stats
 
 
@@ -424,6 +440,23 @@ def get_oldest_processed(session: Session) -> dict:
         ).scalar()
         result[name] = oldest
     result["pipeline_logs"] = session.execute(select(func.min(PipelineLog.created_at))).scalar()
+
+    # Add manifest source oldest processed
+    from engine.etl.sources.manifest_registry import get_global_registry
+    from sqlalchemy import text as sa_text
+    registry = get_global_registry()
+    if registry:
+        for manifest in registry.all_manifests():
+            if not manifest.db_table:
+                continue
+            try:
+                oldest = session.execute(sa_text(
+                    f"SELECT MIN(created_at) FROM {manifest.db_table} WHERE processed = 1"
+                )).scalar()
+                result[manifest.db_table] = oldest
+            except Exception:
+                pass
+
     return result
 
 

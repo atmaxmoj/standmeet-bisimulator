@@ -1,0 +1,41 @@
+{
+  "name": "audio",
+  "version": "0.1.0",
+  "display_name": "Audio Transcription",
+  "description": "Microphone capture + transcription via Faster Whisper",
+  "author": "builtin",
+  "platform": ["darwin", "win32"],
+  "entrypoint": "audio_source:AudioSource",
+  "events": {"audio_transcription": {"label": "Audio Transcription", "color": "purple"}},
+  "db": {
+    "table": "audio_data",
+    "columns": {
+      "timestamp": "text not null",
+      "duration_seconds": "real not null default 0.0",
+      "text": "text not null default ''",
+      "language": "text not null default ''",
+      "source": "text not null default 'mic'",
+      "chunk_path": "text not null default ''",
+      "processed": "integer not null default 0"
+    },
+    "indexes": ["processed", "timestamp"]
+  },
+  "ui": {
+    "icon": "mic",
+    "visible_columns": ["timestamp", "text", "language", "source"],
+    "searchable_columns": ["text"],
+    "detail_columns": ["chunk_path"]
+  },
+  "context": {
+    "description": "Audio transcriptions from microphone capture",
+    "format": "[{timestamp}] [audio]: {text}"
+  },
+  "gc": {
+    "prompt": "Audio transcription entries older than {retention_days} days that have been processed can be purged. Audio chunk files take disk space.",
+    "retention_days_default": 14
+  },
+  "config": {
+    "chunk_duration_seconds": {"type": "number", "default": 300, "label": "Chunk duration (seconds)"},
+    "keep_chunks": {"type": "boolean", "default": false, "label": "Keep audio chunk files"}
+  }
+}
