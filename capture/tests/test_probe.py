@@ -75,7 +75,8 @@ class TestZshProbe:
         assert str(f1) in result.paths or str(f2) in result.paths
 
     def test_both_standard_and_sessions(self, tmp_path):
-        """Both ~/.zsh_history and session files exist."""
+        """Both ~/.zsh_history and session files exist → session mode wins,
+        standard history is skipped to avoid duplicates."""
         from capture.collectors.shell_macos import ZshHistoryCollector
 
         history = tmp_path / ".zsh_history"
@@ -90,8 +91,10 @@ class TestZshProbe:
         result = collector.probe()
 
         assert result.available
-        assert str(history) in result.paths
+        # Session mode: only session files, NOT standard history
         assert str(session_file) in result.paths
+        assert str(history) not in result.paths
+        assert any("skipped" in w for w in result.warnings)
 
     def test_closed_session_files_ignored(self, tmp_path):
         """~/.zsh_sessions/*.history (closed, no 'new') should not be watched."""
@@ -142,6 +145,138 @@ class TestZshProbe:
 
         assert result.available
         assert any("empty" in w.lower() for w in result.warnings)
+
+
+# ── Probe: zsh event stream dedup ──
+
+
+class TestZshEventStream:
+    """When sessions dir exists, events only flow through .historynew files.
+    ~/.zsh_history is a merge target on session close — watching it would
+    duplicate events already seen from .historynew."""
+
+    def test_session_mode_skips_standard_history(self, tmp_path):
+        """If .zsh_sessions/ exists, collect should NOT read from ~/.zsh_history."""
+        from capture.collectors.shell_macos import ZshHistoryCollector
+
+        # Both exist — session mode
+        history = tmp_path / ".zsh_history"
+        write_zsh_extended(history, ["old merged cmd"])
+
+        sessions = tmp_path / ".zsh_sessions"
+        sessions.mkdir()
+        sf = sessions / "ABC.historynew"
+        write_zsh_extended(sf, ["active session cmd"])
+
+        collector = ZshHistoryCollector(home=tmp_path)
+        collector.collect()  # init
+
+        # Append to BOTH files (simulating session close merging)
+        with open(sf, "a") as f:
+            f.write(": 1999999999:0;new-command\n")
+        with open(history, "a") as f:
+            f.write(": 1999999999:0;new-command\n")
+
+        result = collector.collect()
+        # Should see "new-command" exactly once, not twice
+        assert result.count("new-command") == 1
+
+    def test_no_sessions_reads_standard_history(self, tmp_path):
+        """Without .zsh_sessions/, collect reads from ~/.zsh_history."""
+        from capture.collectors.shell_macos import ZshHistoryCollector
+
+        history = tmp_path / ".zsh_history"
+        write_zsh_extended(history, ["git status"])
+
+        collector = ZshHistoryCollector(home=tmp_path)
+        collector.collect()  # init
+
+        with open(history, "a") as f:
+            f.write(": 1999999999:0;new-command\n")
+
+        result = collector.collect()
+        assert "new-command" in result
+
+    def test_session_close_no_duplicate(self, tmp_path):
+        """When a session closes (.historynew → .history), the collector
+        should stop watching it and not re-emit old commands."""
+        from capture.collectors.shell_macos import ZshHistoryCollector
+
+        sessions = tmp_path / ".zsh_sessions"
+        sessions.mkdir()
+        sf = sessions / "ABC.historynew"
+        write_zsh_extended(sf, ["cmd-before-close"])
+
+        collector = ZshHistoryCollector(home=tmp_path)
+        collector.collect()  # init
+
+        with open(sf, "a") as f:
+            f.write(": 1999999999:0;last-cmd-before-close\n")
+
+        result = collector.collect()
+        assert "last-cmd-before-close" in result
+
+        # Simulate session close: rename .historynew → .history
+        closed = sessions / "ABC.history"
+        sf.rename(closed)
+
+        # Next collect should return nothing (file gone)
+        result2 = collector.collect()
+        assert "last-cmd-before-close" not in result2
+
+    def test_new_session_discovered(self, tmp_path):
+        """A new .historynew file appearing should be auto-discovered."""
+        from capture.collectors.shell_macos import ZshHistoryCollector
+
+        sessions = tmp_path / ".zsh_sessions"
+        sessions.mkdir()
+        sf1 = sessions / "AAA.historynew"
+        write_zsh_extended(sf1, ["session1-cmd"])
+
+        collector = ZshHistoryCollector(home=tmp_path)
+        # Force flush_counter to trigger refresh (every 30 cycles)
+        collector._flush_counter = 29
+        collector.collect()  # init
+
+        # New session appears
+        sf2 = sessions / "BBB.historynew"
+        write_zsh_extended(sf2, ["session2-init"])
+
+        # Trigger refresh cycle
+        collector._flush_counter = 29
+        collector.collect()  # should discover sf2 and init it
+
+        # Now append to the new session
+        with open(sf2, "a") as f:
+            f.write(": 1999999999:0;session2-new-cmd\n")
+
+        result = collector.collect()
+        assert "session2-new-cmd" in result
+
+    def test_multiple_sessions_independent(self, tmp_path):
+        """Commands in different session files don't interfere."""
+        from capture.collectors.shell_macos import ZshHistoryCollector
+
+        sessions = tmp_path / ".zsh_sessions"
+        sessions.mkdir()
+        sf1 = sessions / "S1.historynew"
+        sf2 = sessions / "S2.historynew"
+        write_zsh_extended(sf1, ["init1"])
+        write_zsh_extended(sf2, ["init2"])
+
+        collector = ZshHistoryCollector(home=tmp_path)
+        collector.collect()  # init both
+
+        # Append to each independently
+        with open(sf1, "a") as f:
+            f.write(": 1999999999:0;from-s1\n")
+        with open(sf2, "a") as f:
+            f.write(": 1999999999:0;from-s2\n")
+
+        result = collector.collect()
+        assert "from-s1" in result
+        assert "from-s2" in result
+        assert len(result) == 2
 
 
 # ── Probe: bash ──

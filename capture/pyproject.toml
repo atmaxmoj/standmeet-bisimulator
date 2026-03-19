@@ -29,3 +29,4 @@ packages = ["src/capture"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--ignore=tests/test_probe_docker.py"

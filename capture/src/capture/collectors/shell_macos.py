@@ -101,9 +101,11 @@ class _HistoryFileTracker:
 class ZshHistoryCollector(BaseCollector):
     """Reads new commands from zsh history files.
 
-    Probes for:
-    - ~/.zsh_history (standard)
-    - ~/.zsh_sessions/*.historynew (Apple Terminal session files)
+    Two mutually exclusive modes:
+    - Session mode: ~/.zsh_sessions/ exists → watch only *.historynew files.
+      ~/.zsh_history is a merge target on session close, watching it would
+      duplicate events already seen from .historynew.
+    - Standard mode: no sessions dir → watch ~/.zsh_history directly.
     """
 
     event_type = "shell_command"
@@ -113,38 +115,45 @@ class ZshHistoryCollector(BaseCollector):
         self._home = home or Path.home()
         self._trackers: list[_HistoryFileTracker] = []
         self._probed = False
+        self._session_mode = False
         self._flush_counter = 0
 
     def probe(self) -> ProbeResult:
         paths = []
         warnings = []
 
-        # Standard ~/.zsh_history
-        standard = self._home / ".zsh_history"
-        if standard.exists():
-            paths.append(str(standard))
-            if standard.stat().st_size == 0:
-                warnings.append("~/.zsh_history is empty")
-
-        # Apple Terminal session files: ~/.zsh_sessions/*.historynew
         sessions_dir = self._home / ".zsh_sessions"
-        if sessions_dir.is_dir():
+        has_sessions = sessions_dir.is_dir()
+        standard = self._home / ".zsh_history"
+
+        if has_sessions:
+            # Session mode: only watch active .historynew files
             active_sessions = list(sessions_dir.glob("*.historynew"))
             for sf in active_sessions:
                 paths.append(str(sf))
+            if standard.exists():
+                warnings.append("~/.zsh_history exists but skipped (session mode — it is a merge target)")
+        else:
+            # Standard mode: watch ~/.zsh_history
+            if standard.exists():
+                paths.append(str(standard))
+                if standard.stat().st_size == 0:
+                    warnings.append("~/.zsh_history is empty")
 
         if not paths:
+            desc = "no active session files found" if has_sessions else "no history file found"
             return ProbeResult(
                 available=False,
                 source="zsh",
-                description="no history file found",
-                warnings=["checked ~/.zsh_history and ~/.zsh_sessions/"],
+                description=desc,
+                warnings=warnings or ["checked ~/.zsh_history and ~/.zsh_sessions/"],
             )
 
+        mode = "session" if has_sessions else "standard"
         return ProbeResult(
             available=True,
             source="zsh",
-            description=f"found {len(paths)} history source(s)",
+            description=f"found {len(paths)} history source(s) ({mode} mode)",
             paths=paths,
             warnings=warnings,
         )
@@ -152,6 +161,8 @@ class ZshHistoryCollector(BaseCollector):
     def _ensure_probed(self):
         if self._probed:
             return
+        sessions_dir = self._home / ".zsh_sessions"
+        self._session_mode = sessions_dir.is_dir()
         result = self.probe()
         for p in result.paths:
             self._trackers.append(
@@ -167,7 +178,7 @@ class ZshHistoryCollector(BaseCollector):
             _signal_zsh_flush()
 
         # Re-probe for new session files every 30 cycles (~90s)
-        if self._flush_counter % 30 == 0:
+        if self._session_mode and self._flush_counter % 30 == 0:
             self._refresh_session_trackers()
 
         commands = []
