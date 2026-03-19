@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, frameImageUrl, type SourceManifest, type SourceRecord } from "@/lib/api";
+import { api, sourceImageUrl, type SourceManifest, type SourceRecord } from "@/lib/api";
 import { timeAgo, fmtTime } from "@/lib/utils";
 import { useSelection } from "@/hooks/useSelection";
 import { Button } from "@/components/ui/button";
@@ -26,7 +26,7 @@ function RecordDetail({ record, manifest, onClose }: { record: SourceRecord; man
         </div>
         {/* Show image if there's an image_path */}
         {typeof record.image_path === "string" && record.image_path !== "" && (
-          <img src={frameImageUrl(record.id)} alt="" className="w-full border-b" loading="lazy" />
+          <img src={sourceImageUrl(manifest.name, record.id)} alt="" className="w-full border-b" loading="lazy" />
         )}
         <div className="p-4 space-y-3">
           {uniqueColumns.map((col) => {
@@ -73,6 +73,40 @@ function CellValue({ col, val }: { col: string; val: string }) {
   );
 }
 
+function RecordCard({ r, manifest, selected, hasImage, onSelect, onOpen }: {
+  r: SourceRecord; manifest: SourceManifest; selected: boolean; hasImage: boolean;
+  onSelect: () => void; onOpen: () => void;
+}) {
+  const columns = manifest.ui.visible_columns;
+  return (
+    <Card
+      className={`cursor-pointer transition-colors ${selected ? "ring-1 ring-primary bg-primary/5" : "hover:bg-accent/50"}`}
+      onClick={onSelect} onContextMenu={(e) => { e.preventDefault(); onSelect(); }}
+      data-testid="source-record-card"
+    >
+      <CardContent className="p-2 px-3">
+        <div className="flex items-start gap-3">
+          {columns.map((col) => (
+            <CellValue key={col} col={col} val={String(r[col] ?? "")} />
+          ))}
+          {hasImage && typeof r.image_path === "string" && r.image_path !== "" ? (
+            <img src={sourceImageUrl(manifest.name, r.id)} alt=""
+              className="shrink-0 w-20 h-14 object-cover rounded border hover:ring-2 hover:ring-primary transition-shadow"
+              loading="lazy"
+              onClick={(e) => { e.stopPropagation(); onOpen(); }}
+            />
+          ) : hasImage ? (
+            <button onClick={(e) => { e.stopPropagation(); onOpen(); }}
+              className="shrink-0 w-20 h-14 rounded border border-dashed flex items-center justify-center text-[10px] text-muted-foreground hover:bg-accent/50 transition-colors">
+              OCR
+            </button>
+          ) : null}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function SourceDataPanel({ manifest }: { manifest: SourceManifest }) {
   const [records, setRecords] = useState<SourceRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -82,8 +116,8 @@ export function SourceDataPanel({ manifest }: { manifest: SourceManifest }) {
   const [detailRecord, setDetailRecord] = useState<SourceRecord | null>(null);
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
-  const columns = manifest.ui.visible_columns;
   const hasDetail = manifest.ui.detail_columns.length > 0;
+  const hasImage = manifest.ui.detail_columns.includes("image_path");
 
   const load = useCallback(async (p: number = 1) => {
     setLoading(true);
@@ -119,20 +153,11 @@ export function SourceDataPanel({ manifest }: { manifest: SourceManifest }) {
         ) : (
           <div className="space-y-1">
             {records.map((r) => (
-              <Card key={r.id}
-                className={`cursor-pointer transition-colors ${sel.selected.has(r.id) ? "ring-1 ring-primary bg-primary/5" : "hover:bg-accent/50"}`}
-                onClick={() => sel.active ? sel.toggle(r.id) : (hasDetail ? setDetailRecord(r) : sel.toggle(r.id))}
-                onContextMenu={(e) => { e.preventDefault(); sel.toggle(r.id); }}
-                data-testid="source-record-card"
-              >
-                <CardContent className="p-2 px-3">
-                  <div className="flex items-center gap-3">
-                    {columns.map((col) => (
-                      <CellValue key={col} col={col} val={String(r[col] ?? "")} />
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
+              <RecordCard key={r.id} r={r} manifest={manifest} hasImage={hasImage}
+                selected={sel.selected.has(r.id)}
+                onSelect={() => sel.active ? sel.toggle(r.id) : (hasDetail ? setDetailRecord(r) : sel.toggle(r.id))}
+                onOpen={() => setDetailRecord(r)}
+              />
             ))}
           </div>
         )}

@@ -33,8 +33,8 @@ async function post<T>(path: string, body?: unknown): Promise<T> {
   return res.json();
 }
 
-export function frameImageUrl(frameId: number): string {
-  return `${BASE}/capture/frames/${frameId}/image`;
+export function sourceImageUrl(sourceName: string, recordId: number): string {
+  return `${BASE}/sources/${sourceName}/records/${recordId}/image`;
 }
 
 export interface Episode {

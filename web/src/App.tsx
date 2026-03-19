@@ -33,22 +33,33 @@ const systemSidebarItems = [
 function PipelineToggle({ online, captureAlive, paused, toggling, onToggle }: {
   online: boolean; captureAlive: boolean; paused: boolean; toggling: boolean; onToggle: () => void;
 }) {
+  const off = paused || !online || !captureAlive;
   return (
-    <div className="flex items-center gap-2" data-testid="pipeline-toggle">
-      <span className={`w-2 h-2 rounded-full ${captureAlive ? "bg-green-500" : online ? "bg-yellow-500" : "bg-red-500"}`} />
-      <button
-        onClick={onToggle}
-        disabled={toggling}
-        className="relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border transition-colors focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-        style={{ backgroundColor: paused ? "hsl(var(--muted))" : "hsl(var(--primary))" }}
-        role="switch"
-        aria-checked={!paused}
-        data-testid="pipeline-switch"
-      >
-        <span className={`pointer-events-none block h-3.5 w-3.5 rounded-full bg-background shadow-sm ring-0 transition-transform ${paused ? "translate-x-0.5" : "translate-x-[18px]"}`} />
-      </button>
-      <span className="text-xs">{paused ? "Paused" : "Recording"}</span>
-    </div>
+    <button
+      onClick={onToggle}
+      disabled={toggling || !online}
+      data-testid="pipeline-toggle"
+      className={`flex items-center gap-2 px-2.5 py-1 rounded-full border transition-colors disabled:opacity-50 ${
+        !online || !captureAlive ? "border-destructive/40"
+          : paused ? "border-yellow-500/40"
+          : "border-green-500/40"
+      }`}
+    >
+      <span className="flex items-center gap-1.5" data-testid="engine-status">
+        <span className={`w-2 h-2 rounded-full ${
+          !online ? "bg-destructive"
+            : !captureAlive ? "bg-destructive animate-pulse"
+            : paused ? "bg-yellow-500"
+            : "bg-green-500 animate-pulse"
+        }`} />
+        <span className="text-[10px]">
+          {!online ? "Offline" : !captureAlive ? "Capture down" : paused ? "Paused" : "Recording"}
+        </span>
+      </span>
+      <span className={`relative w-7 h-3.5 rounded-full transition-colors ${off ? "bg-muted" : "bg-green-500"}`}>
+        <span className={`absolute top-0.5 w-2.5 h-2.5 rounded-full bg-white shadow transition-transform ${off ? "left-0.5" : "left-[14px]"}`} />
+      </span>
+    </button>
   );
 }
 
