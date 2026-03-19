@@ -28,9 +28,10 @@ PREDICATE = (
 def _classify_runningboard(msg: str) -> str | None:
     if "frontmost" in msg.lower():
         return "frontmost_change"
-    if "Now tracking" in msg or "launch" in msg.lower():
+    # "Now tracking process:" is the actual launch signal
+    if "Now tracking process" in msg:
         return "app_launch"
-    if "termination" in msg.lower() or "process exit" in msg.lower():
+    if "termination reported" in msg or "process exited" in msg:
         return "app_quit"
     return None
 

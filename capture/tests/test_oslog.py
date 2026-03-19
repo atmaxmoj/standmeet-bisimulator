@@ -92,12 +92,15 @@ class TestClassifyEvent:
         assert classify_event(entry) == "app_quit"
 
     def test_noisy_runningboard_ignored(self):
-        """Assertions, jetsam, etc. should be ignored."""
-        entry = {
-            "subsystem": "com.apple.runningboard",
-            "eventMessage": "Invalidating assertion some-internal-stuff",
-        }
-        assert classify_event(entry) is None
+        """Assertions, jetsam, launchservicesd mentions, etc. should be ignored."""
+        for msg in [
+            "Invalidating assertion some-internal-stuff",
+            "Acquiring assertion targeting [anon<osascript>] from originator [osservice<com.apple.coreservices.launchservicesd>]",
+            "PERF: Received request from [osservice<com.apple.coreservices.launchservicesd>]",
+            "is not RunningBoard jetsam managed",
+        ]:
+            entry = {"subsystem": "com.apple.runningboard", "eventMessage": msg}
+            assert classify_event(entry) is None, f"should be noise: {msg[:60]}"
 
     def test_sleep(self):
         entry = {
