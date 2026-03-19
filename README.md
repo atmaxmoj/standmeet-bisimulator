@@ -214,18 +214,27 @@ collect() → POST /ingest/{source} → PostgreSQL table
 | `npm run restart` | Stop + start |
 | `npm run status` | Show running processes + API health |
 | `npm run logs` | Docker compose logs |
-| `npm test` | Lint + engine pytest + framework tests + Playwright e2e |
+| `npm test` | All three layers below |
+| `npm run test:unit` | Layer 1: source framework + engine pytest (mock LLM) |
+| `npm run test:integration` | Layer 2: agentic distill/compose (real LLM) |
+| `npm run test:e2e` | Layer 3: Playwright full pipeline (real LLM) |
 
 ## Testing
 
-All tests run in Docker. No host dependencies beyond Docker + uv.
+Three layers, all in Docker. Requires `ANTHROPIC_API_KEY` for layers 2-3.
 
-```bash
-npm test                # everything
-npm run test:sources    # framework unit tests only
+```
+Layer 1 — Unit          source framework pytest + engine pytest (mock LLM, ~30s)
+Layer 2 — Integration   agentic distill/compose with real LLM (~$0.05)
+Layer 3 — E2E           Playwright: ingest → backfill → episode → distill → dashboard (~$0.05)
 ```
 
-367 tests: 320 engine (pytest/PostgreSQL) + 30 framework + 17 Playwright e2e.
+```bash
+npm test                    # all three layers
+npm run test:unit           # just unit tests (fast, no LLM cost)
+npm run test:integration    # just integration (real LLM)
+npm run test:e2e            # just Playwright (real LLM, full pipeline)
+```
 
 ## License
 

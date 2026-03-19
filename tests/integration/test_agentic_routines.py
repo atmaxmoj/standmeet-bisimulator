@@ -5,10 +5,10 @@ Usage: npm run test:integration
 
 import json
 import logging
-import sqlite3
+import os
 import sys
-import tempfile
 import traceback
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, "/app/src")
@@ -24,31 +24,43 @@ def save_result(name: str, data: dict):
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str))
 
 
-def _setup_test_db(tmp_dir: str) -> sqlite3.Connection:
-    from engine.storage.models import Base
-    from sqlalchemy import create_engine
-    db_path = f"{tmp_dir}/test.db"
-    sa_engine = create_engine(f"sqlite:///{db_path}")
-    Base.metadata.create_all(sa_engine)
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
+def _setup_test_db():
+    """Create a test schema in PostgreSQL with seed data."""
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import sessionmaker
+    from engine.storage.models import Base, Episode, Frame, PlaybookEntry
 
-    # Insert episodes that show a recurring multi-step workflow
+    pg_url = os.environ.get("DATABASE_URL_SYNC", "postgresql+psycopg://observer:observer@db-test:5432/observer_test")
+    schema = f"inttest_{uuid.uuid4().hex[:8]}"
+
+    admin = create_engine(pg_url)
+    with admin.connect() as c:
+        c.execute(text(f"CREATE SCHEMA {schema}"))
+        c.commit()
+    admin.dispose()
+
+    engine = create_engine(f"{pg_url}?options=-csearch_path%3D{schema}")
+    Base.metadata.create_all(engine)
+    session = sessionmaker(bind=engine)()
+
+    # Insert episodes showing a recurring PR review workflow
     for i in range(3):
-        summary = json.dumps({
-            "summary": f"Episode {i}: Opened PR, ran CI tests, reviewed diff, addressed feedback, merged to main.",
-            "method": "PR review cycle: open → CI → review → fix → merge",
-            "turning_points": ["switched from squash to rebase after review feedback"],
-            "avoidance": ["did not merge without CI passing"],
-            "under_pressure": False,
-        })
-        conn.execute(
-            "INSERT INTO episodes (summary, app_names, frame_count, started_at, ended_at, "
-            "frame_id_min, frame_id_max, frame_source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (summary, '["GitHub", "Terminal", "VSCode"]', 60,
-             f"2026-03-17T{10 + i}:00:00Z", f"2026-03-17T{10 + i}:45:00Z",
-             i * 100 + 1, (i + 1) * 100, "capture"),
-        )
+        session.add(Episode(
+            summary=json.dumps({
+                "summary": f"Episode {i}: Opened PR, ran CI tests, reviewed diff, addressed feedback, merged to main.",
+                "method": "PR review cycle: open → CI → review → fix → merge",
+                "turning_points": ["switched from squash to rebase after review feedback"],
+                "avoidance": ["did not merge without CI passing"],
+                "under_pressure": False,
+            }),
+            app_names=json.dumps(["GitHub", "Terminal", "VSCode"]),
+            frame_count=60,
+            started_at=f"2026-03-17T{10 + i}:00:00Z",
+            ended_at=f"2026-03-17T{10 + i}:45:00Z",
+            frame_id_min=i * 100 + 1,
+            frame_id_max=(i + 1) * 100,
+            frame_source="capture",
+        ))
 
     # Insert playbook entries that the routine should reference
     for name, context, action in [
@@ -56,22 +68,30 @@ def _setup_test_db(tmp_dir: str) -> sqlite3.Connection:
         ("review-diff-before-approve", "When reviewing a PR", "Read the full diff before approving, check for edge cases"),
         ("address-feedback-before-merge", "After receiving review feedback", "Address all comments before requesting re-review"),
     ]:
-        conn.execute(
-            "INSERT INTO playbook_entries (name, context, action, confidence, maturity, evidence) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (name, context, action, 0.7, "developing", "[1, 2, 3]"),
-        )
+        session.add(PlaybookEntry(
+            name=name, context=context, action=action,
+            confidence=0.7, maturity="developing", evidence="[1, 2, 3]",
+        ))
 
-    # Insert frames for episode 1
+    # Insert frames
     for i in range(10):
-        conn.execute(
-            "INSERT INTO frames (timestamp, app_name, window_name, text, display_id) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (f"2026-03-17T10:{i:02d}:00Z", "GitHub", "Pull Request #42",
-             f"Review comment {i}: looks good, minor fix needed", 1),
-        )
-    conn.commit()
-    return conn
+        session.add(Frame(
+            timestamp=f"2026-03-17T10:{i:02d}:00Z",
+            app_name="GitHub", window_name="Pull Request #42",
+            text=f"Review comment {i}: looks good, minor fix needed", display_id=1,
+        ))
+
+    session.commit()
+    return session, schema, pg_url
+
+
+def _cleanup(pg_url: str, schema: str):
+    from sqlalchemy import create_engine, text
+    engine = create_engine(pg_url)
+    with engine.connect() as c:
+        c.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
+        c.commit()
+    engine.dispose()
 
 
 def test_agentic_routines_uses_tools():
@@ -88,34 +108,26 @@ def test_agentic_routines_uses_tools():
         openai_base_url=settings.openai_base_url,
     )
 
-    with tempfile.TemporaryDirectory() as tmp:
-        conn = _setup_test_db(tmp)
-        try:
-            count = run_routines(llm, conn, agentic=True)
-            conn.commit()
-        except Exception as e:
-            save_result("error", {
-                "error": str(e),
-                "type": type(e).__name__,
-                "traceback": traceback.format_exc(),
-            })
-            conn.close()
-            raise
+    session, schema, pg_url = _setup_test_db()
+    try:
+        count = run_routines(llm, session, agentic=True)
+        session.commit()
 
-        logs = conn.execute(
-            "SELECT * FROM pipeline_logs WHERE stage LIKE 'routine%' ORDER BY id",
-        ).fetchall()
-        routines = conn.execute("SELECT * FROM routines").fetchall()
+        from engine.storage.models import PipelineLog, Routine
+        from sqlalchemy import select
+        logs = session.execute(select(PipelineLog)).scalars().all()
+        routines = session.execute(select(Routine)).scalars().all()
 
         save_result("full", {
             "routines_written": count,
-            "tool_calls": len([row for row in logs if row["stage"] == "compose_agentic"]),
-            "routines": [dict(r) for r in routines],
-            "logs": [{"stage": row["stage"], "prompt": row["prompt"][:200]} for row in logs],
+            "routines": [{"name": r.name, "trigger": r.trigger, "confidence": r.confidence} for r in routines],
+            "logs": [{"stage": l.stage} for l in logs],
         })
-        conn.close()
 
-    assert count > 0 or len(routines) > 0, "Agent wrote 0 routines"
+        assert count > 0 or len(routines) > 0, "Agent wrote 0 routines"
+    finally:
+        session.close()
+        _cleanup(pg_url, schema)
 
 
 if __name__ == "__main__":

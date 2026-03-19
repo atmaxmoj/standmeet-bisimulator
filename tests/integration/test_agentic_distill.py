@@ -6,10 +6,9 @@ Usage: npm run test:integration
 import json
 import logging
 import os
-import sqlite3
 import sys
-import tempfile
 import traceback
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, "/app/src")
@@ -25,14 +24,25 @@ def save_result(name: str, data: dict):
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str))
 
 
-def _setup_test_db(tmp_dir: str) -> sqlite3.Connection:
-    from engine.storage.models import Base
-    from sqlalchemy import create_engine
-    db_path = f"{tmp_dir}/test.db"
-    sa_engine = create_engine(f"sqlite:///{db_path}")
-    Base.metadata.create_all(sa_engine)
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
+def _setup_test_db():
+    """Create a test schema in PostgreSQL with seed data. Returns (session, schema_name)."""
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.orm import sessionmaker
+    from engine.storage.models import Base, Episode, Frame
+
+    pg_url = os.environ.get("DATABASE_URL_SYNC", "postgresql+psycopg://observer:observer@db-test:5432/observer_test")
+    schema = f"inttest_{uuid.uuid4().hex[:8]}"
+
+    admin = create_engine(pg_url)
+    with admin.connect() as c:
+        c.execute(text(f"CREATE SCHEMA {schema}"))
+        c.commit()
+    admin.dispose()
+
+    engine = create_engine(f"{pg_url}?options=-csearch_path%3D{schema}")
+    Base.metadata.create_all(engine)
+    session = sessionmaker(bind=engine)()
+
     episodes_data = [
         {
             "summary": "Debugging a failing test: checked logs first, found the root cause in a config mismatch, fixed the config file, re-ran tests until green.",
@@ -40,7 +50,7 @@ def _setup_test_db(tmp_dir: str) -> sqlite3.Connection:
             "turning_points": ["initially tried restarting the service, then switched to reading logs"],
             "avoidance": ["did not use print debugging, used structured logs instead"],
             "under_pressure": False,
-            "apps": '["VSCode", "Terminal", "Chrome"]',
+            "apps": ["VSCode", "Terminal", "Chrome"],
         },
         {
             "summary": "Code review workflow: opened PR, ran CI, reviewed diff line by line, left comments on edge cases, requested changes, approved after fixes.",
@@ -48,7 +58,7 @@ def _setup_test_db(tmp_dir: str) -> sqlite3.Connection:
             "turning_points": ["caught a subtle bug during review that tests missed"],
             "avoidance": ["did not approve without running CI first"],
             "under_pressure": False,
-            "apps": '["GitHub", "VSCode"]',
+            "apps": ["GitHub", "VSCode"],
         },
         {
             "summary": "Refactoring a module: wrote characterization tests first, then restructured code in small steps, running tests after each change to ensure no regression.",
@@ -56,90 +66,41 @@ def _setup_test_db(tmp_dir: str) -> sqlite3.Connection:
             "turning_points": ["reverted one change that broke an edge case, took a smaller step instead"],
             "avoidance": ["did not refactor without test coverage"],
             "under_pressure": False,
-            "apps": '["VSCode", "Terminal"]',
+            "apps": ["VSCode", "Terminal"],
         },
     ]
     for i, ep in enumerate(episodes_data):
-        summary = json.dumps({
-            "summary": ep["summary"],
-            "method": ep["method"],
-            "turning_points": ep["turning_points"],
-            "avoidance": ep["avoidance"],
-            "under_pressure": ep["under_pressure"],
-        })
-        conn.execute(
-            "INSERT INTO episodes (summary, app_names, frame_count, started_at, ended_at, "
-            "frame_id_min, frame_id_max, frame_source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (summary, ep["apps"], 50,
-             f"2026-03-17T1{i}:00:00Z", f"2026-03-17T1{i}:30:00Z",
-             i * 100 + 1, (i + 1) * 100, "capture"),
-        )
+        session.add(Episode(
+            summary=json.dumps({
+                "summary": ep["summary"], "method": ep["method"],
+                "turning_points": ep["turning_points"], "avoidance": ep["avoidance"],
+                "under_pressure": ep["under_pressure"],
+            }),
+            app_names=json.dumps(ep["apps"]),
+            frame_count=50,
+            started_at=f"2026-03-17T1{i}:00:00Z",
+            ended_at=f"2026-03-17T1{i}:30:00Z",
+            frame_id_min=i * 100 + 1,
+            frame_id_max=(i + 1) * 100,
+            frame_source="capture",
+        ))
     for i in range(10):
-        conn.execute(
-            "INSERT INTO frames (timestamp, app_name, window_name, text, display_id) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (f"2026-03-17T10:{i:02d}:00Z", "VSCode", "editor.py",
-             f"def function_{i}(): pass", 1),
-        )
-    conn.commit()
-    return conn
+        session.add(Frame(
+            timestamp=f"2026-03-17T10:{i:02d}:00Z",
+            app_name="VSCode", window_name="editor.py",
+            text=f"def function_{i}(): pass", display_id=1,
+        ))
+    session.commit()
+    return session, schema, pg_url
 
 
-def test_oauth_direct_with_distill_tools():
-    """Test OAuth API with the actual distill tools — isolate the 400 error."""
-    import anthropic
-    from engine.agents.tools.distill import make_distill_tools
-
-    token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
-    if not token:
-        print("  SKIP  no token")
-        return
-
-    with tempfile.TemporaryDirectory() as tmp:
-        conn = _setup_test_db(tmp)
-        tools = make_distill_tools(conn)
-
-        # Build API tools same way as complete_with_tools
-        api_tools = [
-            {"name": t.name, "description": t.description, "input_schema": t.input_schema}
-            for t in tools
-        ]
-
-        client = anthropic.Anthropic(
-            api_key=None,
-            auth_token=token,
-            default_headers={
-                "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
-                "user-agent": "claude-cli/2.1.75",
-                "x-app": "cli",
-            },
-        )
-
-        save_result("tools_sent", {"tools": api_tools})
-
-        try:
-            resp = client.messages.create(
-                model="claude-haiku-4-5-20251001",
-                max_tokens=4096,
-                messages=[{"role": "user", "content": "List all playbook entries."}],
-                tools=api_tools,
-            )
-            content = [{"type": b.type, "name": getattr(b, "name", None)}
-                       for b in resp.content]
-            save_result("success", {
-                "stop_reason": resp.stop_reason,
-                "content": content,
-            })
-            print(f"  Stop reason: {resp.stop_reason}, Content: {content}")
-            conn.close()
-        except Exception as e:
-            save_result("error", {
-                "error": str(e),
-                "type": type(e).__name__,
-                "traceback": traceback.format_exc(),
-            })
-            conn.close()
-            raise
+def _cleanup(pg_url: str, schema: str):
+    from sqlalchemy import create_engine, text
+    engine = create_engine(pg_url)
+    with engine.connect() as c:
+        c.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
+        c.commit()
+    engine.dispose()
 
 
 def test_agentic_distill_uses_tools():
@@ -156,40 +117,32 @@ def test_agentic_distill_uses_tools():
         openai_base_url=settings.openai_base_url,
     )
 
-    with tempfile.TemporaryDirectory() as tmp:
-        conn = _setup_test_db(tmp)
-        try:
-            count = run_distill(llm, conn, agentic=True)
-            conn.commit()
-        except Exception as e:
-            save_result("distill_error", {
-                "error": str(e),
-                "type": type(e).__name__,
-                "traceback": traceback.format_exc(),
-            })
-            conn.close()
-            raise
+    session, schema, pg_url = _setup_test_db()
+    try:
+        count = run_distill(llm, session, agentic=True)
+        session.commit()
 
-        logs = conn.execute(
-            "SELECT * FROM pipeline_logs WHERE stage LIKE 'distill%' ORDER BY id",
-        ).fetchall()
-        entries = conn.execute("SELECT * FROM playbook_entries").fetchall()
+        from engine.storage.models import PipelineLog, PlaybookEntry
+        from sqlalchemy import select
+        logs = session.execute(select(PipelineLog)).scalars().all()
+        entries = session.execute(select(PlaybookEntry)).scalars().all()
 
         save_result("distill_full", {
             "entries_written": count,
-            "tool_calls": len([row for row in logs if row["stage"] == "distill_agentic"]),
-            "playbook_entries": [dict(e) for e in entries],
-            "logs": [{"stage": row["stage"], "prompt": row["prompt"][:200]} for row in logs],
+            "playbook_entries": [{"name": e.name, "context": e.context, "confidence": e.confidence} for e in entries],
+            "logs": [{"stage": l.stage} for l in logs],
         })
-        conn.close()
 
-    assert count > 0 or len(entries) > 0, "Agent wrote 0 entries"
+        assert count > 0 or len(entries) > 0, "Agent wrote 0 entries"
+    finally:
+        session.close()
+        _cleanup(pg_url, schema)
 
 
 if __name__ == "__main__":
     passed = 0
     failed = 0
-    tests = [test_oauth_direct_with_distill_tools, test_agentic_distill_uses_tools]
+    tests = [test_agentic_distill_uses_tools]
     for test in tests:
         name = test.__name__
         try:

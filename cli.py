@@ -280,16 +280,27 @@ def cmd_logs():
 
 
 def cmd_test():
-    """Run tests. Usage: npm test [-- <suite>]
-    Suites: capture, audio, engine, web, all (default: all)
+    """Run tests in three layers.
+
+    Usage: npm test [-- <suite>]
+
+    Layers:
+      1. unit        — source framework pytest (local) + engine pytest (Docker, mock LLM)
+      2. integration — tests/integration/ (Docker, real LLM)
+      3. e2e         — Playwright (Docker, real LLM, full pipeline)
+
+    Suites: unit, integration, e2e, all (default: all)
     """
     suite = sys.argv[2] if len(sys.argv) > 2 else "all"
     results = []
+    compose_test = str(ROOT / "docker-compose.test.yml")
+    results_dir = ROOT / "tests" / "results"
+    results_dir.mkdir(parents=True, exist_ok=True)
 
-    # Run code checks first (same as pre-commit hooks)
+    # Code checks always run first
     print("==> Running code checks...")
     checks = [
-        ("ruff", ["uv", "run", "ruff", "check", "src/", "tests/"], ROOT),
+        ("ruff", ["uv", "run", "ruff", "check", "src/", "tests/", "cli.py"], ROOT),
         ("tsc", ["npx", "tsc", "--noEmit"], ROOT / "web"),
         ("eslint", ["npx", "eslint", "src/", "--max-warnings", "0"], ROOT / "web"),
         ("knip", ["npx", "knip"], ROOT / "web"),
@@ -301,18 +312,15 @@ def cmd_test():
             sys.exit(1)
     print("==> All code checks passed\n")
 
-    if suite in ("sources", "all"):
-        print("\n==> Running source framework tests...")
+    # ── Layer 1: Unit tests (mock LLM, no real API calls) ──
+
+    if suite in ("unit", "all"):
+        print("==> [1/3] Source framework unit tests...")
         r = run(["uv", "run", "--extra", "test", "pytest", "-v"],
                 cwd=ROOT / "sources" / "framework")
         results.append(("sources", r.returncode))
 
-    results_dir = ROOT / "tests" / "results"
-    results_dir.mkdir(parents=True, exist_ok=True)
-
-    if suite in ("engine", "all"):
-        print("\n==> Running engine pytest (Docker)...")
-        compose_test = str(ROOT / "docker-compose.test.yml")
+        print("\n==> [1/3] Engine unit tests (Docker)...")
         run(["docker", "compose", "-p", "bisimulator-test", "-f", compose_test,
              "up", "-d", "--build", "--wait", "db-test"], cwd=ROOT)
         engine_log = results_dir / "engine.log"
@@ -326,9 +334,51 @@ def cmd_test():
         if r.returncode != 0:
             print(f"  See {engine_log}")
 
-    if suite in ("web", "all"):
-        print("\n==> Running Playwright tests (Docker)...")
-        compose_test = str(ROOT / "docker-compose.test.yml")
+    # ── Layer 2: Integration tests (real LLM, Docker) ──
+
+    if suite in ("integration", "all"):
+        integration_dir = ROOT / "tests" / "integration"
+        test_files = sorted(integration_dir.glob("test_*.py")) if integration_dir.exists() else []
+        if test_files:
+            print("\n==> [2/3] Integration tests (Docker, real LLM)...")
+            run(["docker", "compose", "-p", "bisimulator-test", "-f", compose_test,
+                 "up", "-d", "--build", "--wait", "engine-test"], cwd=ROOT)
+
+            # Copy integration tests into running container
+            run(["docker", "compose", "-p", "bisimulator-test", "-f", compose_test,
+                 "exec", "-T", "engine-test", "mkdir", "-p", "/app/tests/integration"], cwd=ROOT)
+            run(["docker", "compose", "-p", "bisimulator-test", "-f", compose_test,
+                 "cp", str(integration_dir) + "/.", "engine-test:/app/tests/integration"], cwd=ROOT)
+
+            integration_log = results_dir / "integration.log"
+            failed_tests = []
+            with open(integration_log, "w") as log:
+                for tf in test_files:
+                    print(f"  Running {tf.name}...")
+                    r = subprocess.run(
+                        ["docker", "compose", "-p", "bisimulator-test", "-f", compose_test,
+                         "exec", "-T", "-u", "engine", "engine-test",
+                         "uv", "run", "python", "-u", f"/app/tests/integration/{tf.name}"],
+                        cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
+                    )
+                    if r.returncode != 0:
+                        failed_tests.append(tf.name)
+
+            run(["docker", "compose", "-p", "bisimulator-test", "-f", compose_test,
+                 "cp", "engine-test:/data/test_results/.", str(results_dir / "integration")],
+                cwd=ROOT)
+
+            results.append(("integration", 1 if failed_tests else 0))
+            if failed_tests:
+                print(f"  Failed: {', '.join(failed_tests)}")
+                print(f"  See {integration_log}")
+        else:
+            print("\n==> [2/3] No integration tests found, skipping")
+
+    # ── Layer 3: End-to-end tests (Playwright, real LLM, full pipeline) ──
+
+    if suite in ("e2e", "all"):
+        print("\n==> [3/3] Playwright e2e tests (Docker, real LLM)...")
         run(["docker", "compose", "-p", "bisimulator-test", "-f", compose_test,
              "up", "-d", "--build", "--wait", "engine-test"], cwd=ROOT)
         web_log = results_dir / "web.log"
@@ -338,19 +388,25 @@ def cmd_test():
                  "run", "--rm", "playwright"],
                 cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
             )
-        results.append(("web", r.returncode))
-        # Copy Playwright report from container if available
+        results.append(("e2e", r.returncode))
         run(["docker", "compose", "-p", "bisimulator-test", "-f", compose_test,
              "cp", "engine-test:/data/.", str(results_dir / "web-data")],
             cwd=ROOT)
-        run(["docker", "compose", "-p", "bisimulator-test", "-f", compose_test,
-             "down", "-v"], cwd=ROOT)
         if r.returncode != 0:
             print(f"  See {web_log}")
 
+    # ── Cleanup ──
+
+    run(["docker", "compose", "-p", "bisimulator-test", "-f", compose_test,
+         "down", "-v"], cwd=ROOT)
+
     if not results:
-        print(f"Unknown suite: {suite}. Available: capture, audio, sources, engine, web, all")
+        print(f"Unknown suite: {suite}. Available: unit, integration, e2e, all")
         sys.exit(1)
+
+    print("\n==> Results:")
+    for name, rc in results:
+        print(f"  {name}: {'PASSED' if rc == 0 else 'FAILED'}")
 
     failed = [name for name, rc in results if rc != 0]
     if failed:
@@ -421,54 +477,6 @@ def cmd_experiment():
     print(f"==> Results in {results_dir}/")
 
 
-def cmd_test_integration():
-    """Run integration tests inside Docker (real LLM, real search).
-
-    Usage: npm run test:integration
-    """
-    integration_dir = ROOT / "tests" / "integration"
-    if not integration_dir.exists():
-        print("==> No integration tests found")
-        return
-
-    # Copy test files into container
-    run(["docker", "compose", "exec", "-T", "engine",
-         "mkdir", "-p", "/app/tests/integration"], cwd=ROOT)
-    run(["docker", "compose", "cp",
-         str(integration_dir) + "/.", "engine:/app/tests/integration"], cwd=ROOT)
-
-    # Run each test file
-    results_dir = ROOT / "tests" / "results"
-    results_dir.mkdir(parents=True, exist_ok=True)
-    integration_log = results_dir / "integration.log"
-
-    test_files = sorted(integration_dir.glob("test_*.py"))
-    failed = []
-    with open(integration_log, "w") as log:
-        for tf in test_files:
-            print(f"==> Running {tf.name}...")
-            r = subprocess.run([
-                "docker", "compose", "exec", "-T", "-u", "engine", "engine",
-                "uv", "run", "python", "-u", f"/app/tests/integration/{tf.name}",
-            ], cwd=ROOT, stdout=log, stderr=subprocess.STDOUT)
-            if r.returncode != 0:
-                failed.append(tf.name)
-
-    # Copy test results from container
-    run(["docker", "compose", "cp",
-         "engine:/data/test_results/.", str(results_dir / "integration")],
-        cwd=ROOT)
-
-    if failed:
-        print(f"\n==> FAILED: {', '.join(failed)}")
-        print(f"  Log: {integration_log}")
-        print(f"  Results: {results_dir / 'integration'}/")
-        sys.exit(1)
-    print(f"\n==> All {len(test_files)} integration tests passed")
-    print(f"  Log: {integration_log}")
-    print(f"  Results: {results_dir / 'integration'}/")
-
-
 COMMANDS = {
     "setup": cmd_setup,
     "start": cmd_start,
@@ -480,7 +488,6 @@ COMMANDS = {
     "test": cmd_test,
     "rebuild": cmd_rebuild,
     "experiment": cmd_experiment,
-    "test-integration": cmd_test_integration,
 }
 
 
