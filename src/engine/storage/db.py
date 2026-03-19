@@ -486,15 +486,29 @@ class DB:
             episode_count = (await s.execute(select(func.count()).select_from(Episode))).scalar()
             playbook_count = (await s.execute(select(func.count()).select_from(PlaybookEntry))).scalar()
             routine_count = (await s.execute(select(func.count()).select_from(Routine))).scalar()
+            # Check both legacy frames table and new screen_data manifest table
             last_frame = (await s.execute(
                 select(Frame.timestamp).order_by(Frame.id.desc()).limit(1)
             )).scalar_one_or_none()
+
+            # Also check manifest screen_data table
+            try:
+                from sqlalchemy import text as sa_text
+                screen_ts = (await s.execute(
+                    sa_text("SELECT timestamp FROM screen_data ORDER BY id DESC LIMIT 1")
+                )).scalar_one_or_none()
+                if screen_ts and (not last_frame or str(screen_ts) > str(last_frame)):
+                    last_frame = str(screen_ts)
+            except Exception:
+                pass
 
             capture_alive = False
             if last_frame:
                 from datetime import datetime, timezone, timedelta
                 try:
-                    ts = datetime.fromisoformat(last_frame)
+                    ts = datetime.fromisoformat(str(last_frame).replace(" ", "T"))
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=timezone.utc)
                     capture_alive = (datetime.now(timezone.utc) - ts) < timedelta(minutes=2)
                 except Exception:
                     pass

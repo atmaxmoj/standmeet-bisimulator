@@ -155,7 +155,7 @@ export function SourceDataPanel({ manifest }: { manifest: SourceManifest }) {
             {records.map((r) => (
               <RecordCard key={r.id} r={r} manifest={manifest} hasImage={hasImage}
                 selected={sel.selected.has(r.id)}
-                onSelect={() => sel.active ? sel.toggle(r.id) : (hasDetail ? setDetailRecord(r) : sel.toggle(r.id))}
+                onSelect={() => sel.toggle(r.id)}
                 onOpen={() => setDetailRecord(r)}
               />
             ))}
