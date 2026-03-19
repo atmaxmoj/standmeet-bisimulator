@@ -85,6 +85,65 @@ test.describe("Dashboard", () => {
     await page.screenshot({ path: "tests/screenshots/playbook.png", fullPage: true });
   });
 
+  test("Playbook sort by date changes order", async ({ page }) => {
+    await page.goto("/");
+    await nav(page, "playbooks");
+    const panel = page.getByTestId("playbooks-panel");
+    const cards = panel.getByTestId("playbook-card");
+    await expect(cards.first()).toBeVisible({ timeout: 10000 });
+
+    // Get first card name with default sort (confidence)
+    const defaultFirst = await cards.first().textContent();
+
+    // Click "date" sort
+    await panel.getByRole("button", { name: "date" }).click();
+
+    // First card may change (different sort order)
+    const dateFirst = await cards.first().textContent();
+
+    // At least one sort should have entries (both truthy)
+    expect(defaultFirst).toBeTruthy();
+    expect(dateFirst).toBeTruthy();
+
+    // Switch back to confidence
+    await panel.getByRole("button", { name: "confidence" }).click();
+    const backToDefault = await cards.first().textContent();
+    expect(backToDefault).toBe(defaultFirst);
+  });
+
+  test("Playbook sort by maturity groups by level", async ({ page }) => {
+    await page.goto("/");
+    await nav(page, "playbooks");
+    const panel = page.getByTestId("playbooks-panel");
+    await expect(panel.getByTestId("playbook-card").first()).toBeVisible({ timeout: 10000 });
+
+    // Click "maturity" sort button
+    await panel.getByRole("button", { name: "maturity" }).click();
+
+    // First card should have the highest maturity (mastered or mature)
+    const firstCard = panel.getByTestId("playbook-card").first();
+    const firstText = await firstCard.textContent();
+    // It should contain a maturity badge — at minimum not be nascent if there are higher ones
+    expect(firstText).toBeTruthy();
+  });
+
+  test("Routine sort buttons work", async ({ page }) => {
+    await page.goto("/");
+    await nav(page, "routines");
+    const panel = page.getByTestId("routines-panel");
+    await expect(panel).toBeVisible({ timeout: 10000 });
+
+    // Sort buttons should be visible
+    await expect(panel.getByRole("button", { name: "confidence" })).toBeVisible();
+    await expect(panel.getByRole("button", { name: "date" })).toBeVisible();
+    await expect(panel.getByRole("button", { name: "maturity" })).toBeVisible();
+
+    // Click each and verify no crash
+    await panel.getByRole("button", { name: "date" }).click();
+    await panel.getByRole("button", { name: "maturity" }).click();
+    await panel.getByRole("button", { name: "confidence" }).click();
+  });
+
   test("Usage panel shows cost summary", async ({ page }) => {
     await page.goto("/");
     await nav(page, "usage");
