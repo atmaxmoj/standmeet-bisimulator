@@ -96,10 +96,10 @@ class ManifestCaptureSource(CaptureSource):
         return self._manifest.db_table
 
     def db_schema(self) -> str:
-        cols = ["id INTEGER PRIMARY KEY AUTOINCREMENT"]
+        cols = ["id SERIAL PRIMARY KEY"]
         for col_name, col_type in self._manifest.db_columns.items():
             cols.append(f"{col_name} {col_type}")
-        cols.append("created_at TEXT NOT NULL DEFAULT (datetime('now'))")
+        cols.append("created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()")
         return f"CREATE TABLE IF NOT EXISTS {self._manifest.db_table} ({', '.join(cols)})"
 
     def db_columns(self) -> list[str]:
@@ -198,7 +198,6 @@ def create_table_for_manifest(session: Session, manifest: ManifestData):
     schema = source.db_schema()
     session.execute(text(schema))
 
-    # Create indexes
     for col in manifest.db_indexes:
         idx_name = f"idx_{manifest.db_table}_{col}"
         session.execute(text(
@@ -216,11 +215,12 @@ def insert_record(session: Session, manifest: ManifestData, data: dict) -> int:
 
     cols = list(validated.keys())
     placeholders = [f":{k}" for k in cols]
-    sql = f"INSERT INTO {manifest.db_table} ({', '.join(cols)}) VALUES ({', '.join(placeholders)})"
+    sql = f"INSERT INTO {manifest.db_table} ({', '.join(cols)}) VALUES ({', '.join(placeholders)}) RETURNING id"
 
     result = session.execute(text(sql), validated)
+    row_id = result.scalar() or 0
     session.commit()
-    return result.lastrowid or 0
+    return row_id
 
 
 def query_records(

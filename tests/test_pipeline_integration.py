@@ -1,65 +1,44 @@
 """Integration test: simulate the full pipeline trigger chain.
 
 Tests on_new_data logic directly (without Huey decorators):
-ingest frames → read unprocessed → detect windows → mark processed → enqueue IDs
+ingest frames -> read unprocessed -> detect windows -> mark processed -> enqueue IDs
 """
 
-import sqlite3
 from datetime import datetime, timezone, timedelta
 
 import pytest
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
 
+from engine.storage.models import Base
 from engine.etl.entities import Frame
 from engine.etl.filter import should_keep, detect_windows
+from tests.conftest import TEST_PG_SYNC
 
 
 @pytest.fixture
-def conn(tmp_path):
-    """Create a real SQLite DB with the engine schema."""
-    db_path = str(tmp_path / "test_engine.db")
-    c = sqlite3.connect(db_path)
-    c.row_factory = sqlite3.Row
-    c.execute("PRAGMA journal_mode=WAL")
-    c.executescript("""
-        CREATE TABLE frames (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT NOT NULL,
-            app_name TEXT NOT NULL DEFAULT '',
-            window_name TEXT NOT NULL DEFAULT '',
-            text TEXT NOT NULL DEFAULT '',
-            display_id INTEGER NOT NULL DEFAULT 0,
-            image_hash TEXT NOT NULL DEFAULT '',
-            image_path TEXT NOT NULL DEFAULT '',
-            processed INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL DEFAULT (datetime('now'))
-        );
-        CREATE TABLE audio_frames (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            timestamp TEXT NOT NULL,
-            duration_seconds REAL NOT NULL DEFAULT 0.0,
-            text TEXT NOT NULL DEFAULT '',
-            language TEXT NOT NULL DEFAULT '',
-            source TEXT NOT NULL DEFAULT 'mic',
-            chunk_path TEXT NOT NULL DEFAULT '',
-            processed INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL DEFAULT (datetime('now'))
-        );
-    """)
-    c.commit()
-    yield c
-    c.close()
+def conn(_test_schema):
+    """Create a real PostgreSQL session with the engine schema."""
+    url = f"{TEST_PG_SYNC}?options=-csearch_path%3D{_test_schema}"
+    engine = create_engine(url)
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine)
+    session = factory()
+    yield session
+    session.close()
+    engine.dispose()
 
 
 def _simulate_on_new_data(conn, idle_seconds=300, window_minutes=30):
     """
-    Simulate the on_new_data task logic: read unprocessed → filter → detect windows → mark.
+    Simulate the on_new_data task logic: read unprocessed -> filter -> detect windows -> mark.
     Returns list of (screen_ids, audio_ids) that would be enqueued to process_episode.
     """
     # Read unprocessed screen frames
     screen_rows = conn.execute(
-        "SELECT id, timestamp, app_name, window_name, text, image_path "
-        "FROM frames WHERE processed = 0 ORDER BY timestamp LIMIT 500",
-    ).fetchall()
+        text("SELECT id, timestamp, app_name, window_name, text, image_path "
+             "FROM frames WHERE processed = 0 ORDER BY timestamp LIMIT 500"),
+    ).mappings().all()
     screen_frames = [
         Frame(
             id=r["id"], source="capture",
@@ -73,9 +52,9 @@ def _simulate_on_new_data(conn, idle_seconds=300, window_minutes=30):
 
     # Read unprocessed audio frames
     audio_rows = conn.execute(
-        "SELECT id, timestamp, text, language "
-        "FROM audio_frames WHERE processed = 0 ORDER BY timestamp LIMIT 100",
-    ).fetchall()
+        text("SELECT id, timestamp, text, language "
+             "FROM audio_frames WHERE processed = 0 ORDER BY timestamp LIMIT 100"),
+    ).mappings().all()
     audio_frames = [
         Frame(
             id=r["id"], source="audio",
@@ -100,7 +79,7 @@ def _simulate_on_new_data(conn, idle_seconds=300, window_minutes=30):
     )
 
     if not kept:
-        # All noise — mark everything processed
+        # All noise -- mark everything processed
         _mark_processed(conn, all_screen_ids, all_audio_ids)
         return []
 
@@ -134,16 +113,19 @@ def _simulate_on_new_data(conn, idle_seconds=300, window_minutes=30):
 
 def _mark_processed(conn, screen_ids, audio_ids):
     if screen_ids:
-        ph = ",".join("?" * len(screen_ids))
-        conn.execute(f"UPDATE frames SET processed = 1 WHERE id IN ({ph})", list(screen_ids))
+        ph = ",".join(str(i) for i in screen_ids)
+        conn.execute(text(f"UPDATE frames SET processed = 1 WHERE id IN ({ph})"))
     if audio_ids:
-        ph = ",".join("?" * len(audio_ids))
-        conn.execute(f"UPDATE audio_frames SET processed = 1 WHERE id IN ({ph})", list(audio_ids))
+        ph = ",".join(str(i) for i in audio_ids)
+        conn.execute(text(f"UPDATE audio_frames SET processed = 1 WHERE id IN ({ph})"))
     conn.commit()
 
 
 def _count(conn, table, processed):
-    return conn.execute(f"SELECT COUNT(*) as c FROM {table} WHERE processed = ?", (processed,)).fetchone()["c"]
+    return conn.execute(
+        text(f"SELECT COUNT(*) as c FROM {table} WHERE processed = :p"),
+        {"p": processed},
+    ).scalar()
 
 
 def _insert_frames(conn, count, minutes_ago, app="VSCode", window="editor.py"):
@@ -151,16 +133,17 @@ def _insert_frames(conn, count, minutes_ago, app="VSCode", window="editor.py"):
     for i in range(count):
         t = (base + timedelta(minutes=i)).isoformat()
         conn.execute(
-            "INSERT INTO frames (timestamp, app_name, window_name, text, display_id, image_hash) "
-            "VALUES (?, ?, ?, ?, 1, ?)",
-            (t, app, window, f"meaningful content line number {i} here", f"h{i}"),
+            text("INSERT INTO frames (timestamp, app_name, window_name, text, display_id, image_hash) "
+                 "VALUES (:ts, :app, :win, :txt, 1, :hash)"),
+            {"ts": t, "app": app, "win": window,
+             "txt": f"meaningful content line number {i} here", "hash": f"h{i}"},
         )
     conn.commit()
 
 
 class TestPipelineTrigger:
     def test_old_frames_trigger_window(self, conn):
-        """Frames older than idle_seconds → window triggered, frames marked processed."""
+        """Frames older than idle_seconds -> window triggered, frames marked processed."""
         _insert_frames(conn, count=10, minutes_ago=60)
         assert _count(conn, "frames", 0) == 10
 
@@ -172,14 +155,14 @@ class TestPipelineTrigger:
         assert _count(conn, "frames", 1) > 0, "Frames should be marked processed"
 
     def test_recent_frames_stay_unprocessed(self, conn):
-        """Frames from just now → no window, all stay unprocessed."""
+        """Frames from just now -> no window, all stay unprocessed."""
         now = datetime.now(timezone.utc)
         for i in range(3):
             t = (now - timedelta(seconds=i * 2)).isoformat()
             conn.execute(
-                "INSERT INTO frames (timestamp, app_name, window_name, text, display_id, image_hash) "
-                "VALUES (?, 'Terminal', 'zsh', ?, 1, ?)",
-                (t, f"recent command number {i} text content", f"r{i}"),
+                text("INSERT INTO frames (timestamp, app_name, window_name, text, display_id, image_hash) "
+                     "VALUES (:ts, 'Terminal', 'zsh', :txt, 1, :hash)"),
+                {"ts": t, "txt": f"recent command number {i} text content", "hash": f"r{i}"},
             )
         conn.commit()
 
@@ -196,9 +179,9 @@ class TestPipelineTrigger:
         for i in range(3):
             t = (now - timedelta(seconds=i * 2)).isoformat()
             conn.execute(
-                "INSERT INTO frames (timestamp, app_name, window_name, text, display_id, image_hash) "
-                "VALUES (?, 'Terminal', 'zsh', ?, 1, ?)",
-                (t, f"recent command number {i} with text", f"r{i}"),
+                text("INSERT INTO frames (timestamp, app_name, window_name, text, display_id, image_hash) "
+                     "VALUES (:ts, 'Terminal', 'zsh', :txt, 1, :hash)"),
+                {"ts": t, "txt": f"recent command number {i} with text", "hash": f"r{i}"},
             )
         conn.commit()
 
@@ -212,12 +195,12 @@ class TestPipelineTrigger:
         """Noise frames (Finder, short text) are marked processed, not stuck forever."""
         old = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
         conn.execute(
-            "INSERT INTO frames (timestamp, app_name, window_name, text, display_id, image_hash) "
-            "VALUES (?, 'Finder', 'Desktop', 'x', 1, 'n1')", (old,),
+            text("INSERT INTO frames (timestamp, app_name, window_name, text, display_id, image_hash) "
+                 "VALUES (:ts, 'Finder', 'Desktop', 'x', 1, 'n1')"), {"ts": old},
         )
         conn.execute(
-            "INSERT INTO frames (timestamp, app_name, window_name, text, display_id, image_hash) "
-            "VALUES (?, 'Dock', '', '', 1, 'n2')", (old,),
+            text("INSERT INTO frames (timestamp, app_name, window_name, text, display_id, image_hash) "
+                 "VALUES (:ts, 'Dock', '', '', 1, 'n2')"), {"ts": old},
         )
         conn.commit()
 
@@ -232,16 +215,16 @@ class TestPipelineTrigger:
         for i in range(5):
             t = (old + timedelta(minutes=i)).isoformat()
             conn.execute(
-                "INSERT INTO frames (timestamp, app_name, window_name, text, display_id, image_hash) "
-                "VALUES (?, 'VSCode', 'main.py', ?, 1, ?)",
-                (t, f"code line number {i} with enough text", f"h{i}"),
+                text("INSERT INTO frames (timestamp, app_name, window_name, text, display_id, image_hash) "
+                     "VALUES (:ts, 'VSCode', 'main.py', :txt, 1, :hash)"),
+                {"ts": t, "txt": f"code line number {i} with enough text", "hash": f"h{i}"},
             )
         for i in range(2):
             t = (old + timedelta(minutes=i)).isoformat()
             conn.execute(
-                "INSERT INTO audio_frames (timestamp, text, language, duration_seconds) "
-                "VALUES (?, ?, 'en', 3.0)",
-                (t, f"spoken text number {i} with content"),
+                text("INSERT INTO audio_frames (timestamp, text, language, duration_seconds) "
+                     "VALUES (:ts, :txt, 'en', 3.0)"),
+                {"ts": t, "txt": f"spoken text number {i} with content"},
             )
         conn.commit()
 
@@ -255,24 +238,24 @@ class TestPipelineTrigger:
         assert _count(conn, "audio_frames", 1) > 0
 
     def test_idle_gap_splits_windows(self, conn):
-        """A big gap between frames → separate windows."""
+        """A big gap between frames -> separate windows."""
         old = datetime.now(timezone.utc) - timedelta(hours=2)
 
         # Group 1: 3 frames close together
         for i in range(3):
             t = (old + timedelta(seconds=i * 10)).isoformat()
             conn.execute(
-                "INSERT INTO frames (timestamp, app_name, window_name, text, display_id, image_hash) "
-                "VALUES (?, 'VSCode', 'a.py', ?, 1, ?)",
-                (t, f"code content group one line {i}", f"g1_{i}"),
+                text("INSERT INTO frames (timestamp, app_name, window_name, text, display_id, image_hash) "
+                     "VALUES (:ts, 'VSCode', 'a.py', :txt, 1, :hash)"),
+                {"ts": t, "txt": f"code content group one line {i}", "hash": f"g1_{i}"},
             )
-        # Gap of 30 minutes → exceeds 5-min idle threshold
+        # Gap of 30 minutes -> exceeds 5-min idle threshold
         for i in range(3):
             t = (old + timedelta(minutes=30, seconds=i * 10)).isoformat()
             conn.execute(
-                "INSERT INTO frames (timestamp, app_name, window_name, text, display_id, image_hash) "
-                "VALUES (?, 'Chrome', 'docs', ?, 1, ?)",
-                (t, f"reading docs group two line {i}", f"g2_{i}"),
+                text("INSERT INTO frames (timestamp, app_name, window_name, text, display_id, image_hash) "
+                     "VALUES (:ts, 'Chrome', 'docs', :txt, 1, :hash)"),
+                {"ts": t, "txt": f"reading docs group two line {i}", "hash": f"g2_{i}"},
             )
         conn.commit()
 
@@ -304,9 +287,9 @@ class TestPipelineTrigger:
         for i in range(3):
             t = (base + timedelta(minutes=i)).isoformat()
             conn.execute(
-                "INSERT INTO frames (timestamp, app_name, window_name, text, display_id, image_hash) "
-                "VALUES (?, 'Terminal', 'zsh', ?, 1, ?)",
-                (t, f"new batch command number {i} content", f"new{i}"),
+                text("INSERT INTO frames (timestamp, app_name, window_name, text, display_id, image_hash) "
+                     "VALUES (:ts, 'Terminal', 'zsh', :txt, 1, :hash)"),
+                {"ts": t, "txt": f"new batch command number {i} content", "hash": f"new{i}"},
             )
         conn.commit()
 
@@ -319,12 +302,12 @@ class TestPipelineTrigger:
         inserted_ids = []
         for i in range(5):
             t = (old + timedelta(minutes=i)).isoformat()
-            conn.execute(
-                "INSERT INTO frames (timestamp, app_name, window_name, text, display_id, image_hash) "
-                "VALUES (?, 'VSCode', 'main.py', ?, 1, ?)",
-                (t, f"code content for episode test line {i}", f"ep{i}"),
+            result = conn.execute(
+                text("INSERT INTO frames (timestamp, app_name, window_name, text, display_id, image_hash) "
+                     "VALUES (:ts, 'VSCode', 'main.py', :txt, 1, :hash) RETURNING id"),
+                {"ts": t, "txt": f"code content for episode test line {i}", "hash": f"ep{i}"},
             )
-            inserted_ids.append(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+            inserted_ids.append(result.scalar())
         conn.commit()
 
         enqueued = _simulate_on_new_data(conn, idle_seconds=300)

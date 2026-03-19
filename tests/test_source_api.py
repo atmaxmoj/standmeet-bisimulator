@@ -4,6 +4,7 @@ import json
 from unittest.mock import MagicMock
 
 import pytest
+import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 
 ZSH_MANIFEST = {
@@ -29,21 +30,21 @@ ZSH_MANIFEST = {
 }
 
 
-@pytest.fixture
-def app_with_zsh_source(tmp_path):
+@pytest_asyncio.fixture
+async def app_with_zsh_source(tmp_path, _test_schema):
     """Create a FastAPI app with zsh manifest source registered."""
     import os
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
+    from tests.conftest import TEST_PG_SYNC, TEST_PG_ASYNC, _TestDB
 
     # Write manifest to a temp dir
     zsh_dir = tmp_path / "sources" / "zsh"
     zsh_dir.mkdir(parents=True)
     (zsh_dir / "manifest.json").write_text(json.dumps(ZSH_MANIFEST))
 
-    db_path = tmp_path / "test.db"
-    db_url = f"sqlite+aiosqlite:///{db_path}"
-    sync_url = f"sqlite:///{db_path}"
+    sync_url = f"{TEST_PG_SYNC}?options=-csearch_path%3D{_test_schema}"
+    db_url = TEST_PG_ASYNC
 
     os.environ["SOURCES_DIR"] = str(tmp_path / "sources")
     os.environ["DATABASE_URL"] = db_url
@@ -68,7 +69,6 @@ def app_with_zsh_source(tmp_path):
     # Create a minimal FastAPI app with the routes
     from fastapi import FastAPI
     from engine.api.routes import router
-    from engine.storage.db import DB
 
     app = FastAPI()
     app.include_router(router)
@@ -77,23 +77,20 @@ def app_with_zsh_source(tmp_path):
     settings = MagicMock()
     settings.database_url_sync = sync_url
 
-    async def setup_db():
-        db = DB(db_url)
-        await db.connect()
-        app.state.db = db
-        app.state.manifest_registry = registry
-        app.state.settings = settings
-
-    import asyncio
-    asyncio.get_event_loop().run_until_complete(setup_db())
+    db = _TestDB(db_url, _test_schema)
+    await db.connect()
+    app.state.db = db
+    app.state.manifest_registry = registry
+    app.state.settings = settings
 
     yield app
 
+    await db.close()
     os.environ.pop("SOURCES_DIR", None)
     os.environ.pop("DATABASE_URL", None)
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def client(app_with_zsh_source):
     transport = ASGITransport(app=app_with_zsh_source)
     async with AsyncClient(transport=transport, base_url="http://test") as c:

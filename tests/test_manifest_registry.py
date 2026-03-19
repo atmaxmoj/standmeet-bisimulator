@@ -5,8 +5,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import text
 
 from engine.etl.sources.manifest_registry import (
     ManifestCaptureSource,
@@ -59,12 +58,8 @@ def zsh_manifest():
 
 
 @pytest.fixture
-def db_session():
-    engine = create_engine("sqlite:///:memory:")
-    factory = sessionmaker(bind=engine)
-    session = factory()
-    yield session
-    session.close()
+def db_session(sync_session):
+    return sync_session
 
 
 def _write_manifest(data: dict) -> Path:
@@ -198,12 +193,18 @@ class TestCreateTable:
         create_table_for_manifest(db_session, zsh_manifest)
 
         # Verify table exists
-        result = db_session.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='zsh_data'"))
+        result = db_session.execute(text(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_name = 'zsh_data'"
+        ))
         assert result.scalar() == "zsh_data"
 
         # Verify columns
-        result = db_session.execute(text("PRAGMA table_info(zsh_data)"))
-        cols = {row[1] for row in result.fetchall()}
+        result = db_session.execute(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'zsh_data'"
+        ))
+        cols = {row[0] for row in result.fetchall()}
         assert "id" in cols
         assert "timestamp" in cols
         assert "command" in cols

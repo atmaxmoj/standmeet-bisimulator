@@ -49,12 +49,7 @@ def _memory_dir(tmp_path):
     mf.MEMORY_DIR = old
 
 
-@pytest.fixture
-async def db(tmp_path):
-    d = DB(f"sqlite+aiosqlite:///{tmp_path}/test.db")
-    await d.connect()
-    yield d
-    await d.close()
+## db fixture is inherited from conftest.py
 
 
 def make_frames(n: int = 5, source: str = "capture") -> list[Frame]:
@@ -144,14 +139,15 @@ class TestEpisodeE2E:
         episodes = await db.get_all_episodes()
         assert len(episodes) == 2
 
-        # First episode has correct data
-        ep1 = episodes[0]
-        summary = json.loads(ep1["summary"])
-        assert "VSCode" in summary["summary"]
-        assert ep1["app_names"] == '["VSCode"]'
-        assert ep1["frame_count"] == 5
-        assert ep1["frame_id_min"] == 1
-        assert ep1["frame_id_max"] == 5
+        # Check episode data (order may vary in PostgreSQL)
+        summaries = [json.loads(ep["summary"])["summary"] for ep in episodes]
+        assert any("VSCode" in s for s in summaries)
+        # Find the VSCode episode
+        vscode_ep = [ep for ep in episodes if "VSCode" in json.loads(ep["summary"])["summary"]][0]
+        assert vscode_ep["app_names"] == '["VSCode"]'
+        assert vscode_ep["frame_count"] == 5
+        assert vscode_ep["frame_id_min"] == 1
+        assert vscode_ep["frame_id_max"] == 5
 
     @pytest.mark.asyncio
     async def test_empty_frames_returns_empty(self, db):

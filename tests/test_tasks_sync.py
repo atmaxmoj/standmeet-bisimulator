@@ -1,20 +1,23 @@
 """E2E tests for Huey sync pipeline (tasks.py).
 
 Tests the same pipeline as test_pipeline_e2e.py but through the sync code path
-that production Huey tasks use. Mock LLM, real sqlite3 DB.
+that production Huey tasks use. Mock LLM, real PostgreSQL DB.
 """
 
 import json
-import sqlite3
 
 import pytest
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
 
+from engine.storage.models import Base
 from engine.llm import LLMResponse
 from engine.etl.entities import Frame
 from engine.pipeline.episode import EPISODE_PROMPT, build_context
 from engine.pipeline.distill import DISTILL_PROMPT
 from engine.pipeline.routines import ROUTINE_PROMPT
 from engine.pipeline.stages.validate import validate_episodes, validate_playbooks, with_retry
+from tests.conftest import TEST_PG_SYNC
 
 # Same canned responses as test_pipeline_e2e.py
 EPISODE_LLM_RESPONSE = json.dumps([
@@ -66,84 +69,31 @@ ROUTINE_LLM_RESPONSE = json.dumps([
     },
 ])
 
-SCHEMA = """
-CREATE TABLE frames (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT NOT NULL, app_name TEXT DEFAULT '', window_name TEXT DEFAULT '',
-    text TEXT DEFAULT '', display_id INTEGER DEFAULT 0,
-    image_hash TEXT DEFAULT '', image_path TEXT DEFAULT '',
-    processed INTEGER DEFAULT 0, created_at TEXT DEFAULT (datetime('now'))
-);
-CREATE TABLE audio_frames (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT NOT NULL, duration_seconds REAL DEFAULT 0,
-    text TEXT DEFAULT '', language TEXT DEFAULT '', source TEXT DEFAULT 'mic',
-    chunk_path TEXT DEFAULT '', processed INTEGER DEFAULT 0,
-    created_at TEXT DEFAULT (datetime('now'))
-);
-CREATE TABLE os_events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT NOT NULL, event_type TEXT NOT NULL,
-    source TEXT DEFAULT '', data TEXT DEFAULT '',
-    processed INTEGER DEFAULT 0, created_at TEXT DEFAULT (datetime('now'))
-);
-CREATE TABLE episodes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    summary TEXT NOT NULL, app_names TEXT DEFAULT '', frame_count INTEGER DEFAULT 0,
-    started_at TEXT NOT NULL, ended_at TEXT NOT NULL,
-    frame_id_min INTEGER DEFAULT 0, frame_id_max INTEGER DEFAULT 0,
-    frame_source TEXT DEFAULT '', created_at TEXT DEFAULT (datetime('now'))
-);
-CREATE TABLE playbook_entries (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE, context TEXT DEFAULT '', action TEXT DEFAULT '',
-    confidence REAL DEFAULT 0, maturity TEXT DEFAULT 'nascent',
-    evidence TEXT DEFAULT '[]', last_evidence_at TEXT,
-    created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now'))
-);
-CREATE TABLE routines (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE, trigger TEXT DEFAULT '', goal TEXT DEFAULT '',
-    steps TEXT DEFAULT '[]', uses TEXT DEFAULT '[]',
-    confidence REAL DEFAULT 0, maturity TEXT DEFAULT 'nascent',
-    created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now'))
-);
-CREATE TABLE token_usage (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    model TEXT NOT NULL, layer TEXT NOT NULL,
-    input_tokens INTEGER DEFAULT 0, output_tokens INTEGER DEFAULT 0,
-    cost_usd REAL DEFAULT 0, created_at TEXT DEFAULT (datetime('now'))
-);
-CREATE TABLE pipeline_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    stage TEXT NOT NULL, prompt TEXT DEFAULT '', response TEXT DEFAULT '',
-    model TEXT DEFAULT '', input_tokens INTEGER DEFAULT 0,
-    output_tokens INTEGER DEFAULT 0, cost_usd REAL DEFAULT 0,
-    created_at TEXT DEFAULT (datetime('now'))
-);
-"""
-
 
 @pytest.fixture
-def conn(tmp_path):
-    db_path = str(tmp_path / "test.db")
-    c = sqlite3.connect(db_path)
-    c.row_factory = sqlite3.Row
-    c.executescript(SCHEMA)
-    yield c
-    c.close()
+def conn(_test_schema):
+    """Create a sync SQLAlchemy session with tables in the test schema."""
+    url = f"{TEST_PG_SYNC}?options=-csearch_path%3D{_test_schema}"
+    engine = create_engine(url)
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine)
+    session = factory()
+    yield session
+    session.close()
+    engine.dispose()
 
 
 def _seed_frames(conn, n=5):
     """Insert screen frames and return their IDs."""
     ids = []
     for i in range(n):
-        conn.execute(
-            "INSERT INTO frames (timestamp, app_name, window_name, text, display_id) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (f"2026-03-16T10:{i:02d}:00Z", "VSCode", "editor.py", f"def func_{i}(): pass", 1),
+        result = conn.execute(
+            text("INSERT INTO frames (timestamp, app_name, window_name, text, display_id) "
+                 "VALUES (:ts, :app, :win, :txt, :did) RETURNING id"),
+            {"ts": f"2026-03-16T10:{i:02d}:00Z", "app": "VSCode",
+             "win": "editor.py", "txt": f"def func_{i}(): pass", "did": 1},
         )
-        ids.append(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+        ids.append(result.scalar())
     conn.commit()
     return ids
 
@@ -151,11 +101,13 @@ def _seed_frames(conn, n=5):
 def _seed_os_events(conn, n=2):
     ids = []
     for i in range(n):
-        conn.execute(
-            "INSERT INTO os_events (timestamp, event_type, source, data) VALUES (?, ?, ?, ?)",
-            (f"2026-03-16T10:{i:02d}:30Z", "shell_command", "zsh", f"git status {i}"),
+        result = conn.execute(
+            text("INSERT INTO os_events (timestamp, event_type, source, data) "
+                 "VALUES (:ts, :etype, :src, :data) RETURNING id"),
+            {"ts": f"2026-03-16T10:{i:02d}:30Z", "etype": "shell_command",
+             "src": "zsh", "data": f"git status {i}"},
         )
-        ids.append(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+        ids.append(result.scalar())
     conn.commit()
     return ids
 
@@ -169,9 +121,11 @@ def _seed_episodes(conn):
             "avoidance": task["avoidance"], "under_pressure": task["under_pressure"],
         }, ensure_ascii=False)
         conn.execute(
-            "INSERT INTO episodes (summary, app_names, frame_count, started_at, ended_at, "
-            "frame_id_min, frame_id_max, frame_source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (summary, json.dumps(task["apps"]), 5, task["started_at"], task["ended_at"], 1, 5, "capture"),
+            text("INSERT INTO episodes (summary, app_names, frame_count, started_at, ended_at, "
+                 "frame_id_min, frame_id_max, frame_source) VALUES (:summary, :apps, :fc, :start, :end, :fmin, :fmax, :fsrc)"),
+            {"summary": summary, "apps": json.dumps(task["apps"]), "fc": 5,
+             "start": task["started_at"], "end": task["ended_at"],
+             "fmin": 1, "fmax": 5, "fsrc": "capture"},
         )
     conn.commit()
 
@@ -194,21 +148,21 @@ def _load_frames_sync(conn, screen_ids, os_event_ids=None):
     """Same logic as tasks._load_frames but importable without side effects."""
     frames = []
     if screen_ids:
-        ph = ",".join("?" * len(screen_ids))
+        ph = ",".join(str(i) for i in screen_ids)
         rows = conn.execute(
-            f"SELECT id, timestamp, app_name, window_name, text, image_path "
-            f"FROM frames WHERE id IN ({ph}) ORDER BY timestamp", screen_ids,
-        ).fetchall()
+            text(f"SELECT id, timestamp, app_name, window_name, text, image_path "
+                 f"FROM frames WHERE id IN ({ph}) ORDER BY timestamp"),
+        ).mappings().all()
         frames.extend(Frame(id=r["id"], source="capture", text=r["text"] or "",
                             app_name=r["app_name"] or "", window_name=r["window_name"] or "",
                             timestamp=r["timestamp"] or "", image_path=r["image_path"] or "")
                       for r in rows)
     if os_event_ids:
-        ph = ",".join("?" * len(os_event_ids))
+        ph = ",".join(str(i) for i in os_event_ids)
         rows = conn.execute(
-            f"SELECT id, timestamp, event_type, source, data "
-            f"FROM os_events WHERE id IN ({ph}) ORDER BY timestamp", os_event_ids,
-        ).fetchall()
+            text(f"SELECT id, timestamp, event_type, source, data "
+                 f"FROM os_events WHERE id IN ({ph}) ORDER BY timestamp"),
+        ).mappings().all()
         frames.extend(Frame(id=r["id"], source="os_event", text=r["data"] or "",
                             app_name=r["event_type"] or "", window_name=r["source"] or "",
                             timestamp=r["timestamp"] or "")
@@ -230,15 +184,16 @@ def _store_episodes_sync(conn, tasks, frames):
             "under_pressure": task.get("under_pressure", False),
         }, ensure_ascii=False)
         conn.execute(
-            "INSERT INTO episodes (summary, app_names, frame_count, started_at, ended_at, "
-            "frame_id_min, frame_id_max, frame_source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (summary, json.dumps(task.get("apps", [])), len(frames),
-             task.get("started_at", frames[0].timestamp),
-             task.get("ended_at", frames[-1].timestamp), fmin, fmax, fsource),
+            text("INSERT INTO episodes (summary, app_names, frame_count, started_at, ended_at, "
+                 "frame_id_min, frame_id_max, frame_source) VALUES (:summary, :apps, :fc, :start, :end, :fmin, :fmax, :fsrc)"),
+            {"summary": summary, "apps": json.dumps(task.get("apps", [])), "fc": len(frames),
+             "start": task.get("started_at", frames[0].timestamp),
+             "end": task.get("ended_at", frames[-1].timestamp),
+             "fmin": fmin, "fmax": fmax, "fsrc": fsource},
         )
 
 
-# ── Load frames ──
+# -- Load frames --
 
 class TestLoadFrames:
     def test_loads_screen_frames(self, conn):
@@ -267,7 +222,7 @@ class TestLoadFrames:
         assert _load_frames_sync(conn, []) == []
 
 
-# ── Build prompt ──
+# -- Build prompt --
 
 class TestBuildPrompt:
     def test_contains_frame_data(self):
@@ -280,7 +235,7 @@ class TestBuildPrompt:
         assert "{context}" not in prompt
 
 
-# ── Store episodes ──
+# -- Store episodes --
 
 class TestStoreEpisodes:
     def test_stores_to_db(self, conn):
@@ -289,17 +244,17 @@ class TestStoreEpisodes:
                         app_name="VSCode", window_name="x", text="x") for i in range(1, 6)]
         _store_episodes_sync(conn, tasks, frames)
         conn.commit()
-        rows = conn.execute("SELECT * FROM episodes").fetchall()
+        rows = conn.execute(text("SELECT * FROM episodes")).mappings().all()
         assert len(rows) == 2
         assert rows[0]["frame_id_min"] == 1
         assert rows[0]["frame_id_max"] == 5
 
 
-# ── Full sync episode pipeline ──
+# -- Full sync episode pipeline --
 
 class TestProcessEpisodeSync:
     def test_full_sync_chain(self, conn):
-        """frames in DB → load → build prompt → LLM → validate → store."""
+        """frames in DB -> load -> build prompt -> LLM -> validate -> store."""
         screen_ids = _seed_frames(conn, 5)
         frames = _load_frames_sync(conn, screen_ids, [])
         prompt = EPISODE_PROMPT.format(context=build_context(frames))
@@ -310,7 +265,7 @@ class TestProcessEpisodeSync:
         _store_episodes_sync(conn, tasks, frames)
         conn.commit()
 
-        episodes = conn.execute("SELECT * FROM episodes").fetchall()
+        episodes = conn.execute(text("SELECT * FROM episodes")).mappings().all()
         assert len(episodes) == 2
         assert "VSCode" in json.loads(episodes[0]["summary"])["summary"]
         assert llm.calls[0] == prompt
@@ -329,16 +284,16 @@ class TestProcessEpisodeSync:
         assert len(tasks) == 2
 
 
-# ── Full sync distill pipeline ──
+# -- Full sync distill pipeline --
 
 class TestDistillSync:
     def test_full_sync_distill(self, conn):
-        """episodes in DB → format prompt → LLM → validate → store playbook."""
+        """episodes in DB -> format prompt -> LLM -> validate -> store playbook."""
         _seed_episodes(conn)
 
         episodes = conn.execute(
-            "SELECT * FROM episodes ORDER BY created_at"
-        ).fetchall()
+            text("SELECT * FROM episodes ORDER BY created_at")
+        ).mappings().all()
         episodes_text = "\n\n".join(
             f"Episode #{e['id']}:\n{e['summary']}" for e in episodes
         )
@@ -351,14 +306,16 @@ class TestDistillSync:
 
         for entry in entries:
             conn.execute(
-                "INSERT INTO playbook_entries (name, context, action, confidence, maturity, evidence) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (entry["name"], entry.get("context", ""), entry.get("action", ""),
-                 entry["confidence"], entry["maturity"], json.dumps(entry.get("evidence", []))),
+                text("INSERT INTO playbook_entries (name, context, action, confidence, maturity, evidence) "
+                     "VALUES (:name, :ctx, :action, :conf, :mat, :ev)"),
+                {"name": entry["name"], "ctx": entry.get("context", ""),
+                 "action": entry.get("action", ""),
+                 "conf": entry["confidence"], "mat": entry["maturity"],
+                 "ev": json.dumps(entry.get("evidence", []))},
             )
         conn.commit()
 
-        playbooks = conn.execute("SELECT * FROM playbook_entries").fetchall()
+        playbooks = conn.execute(text("SELECT * FROM playbook_entries")).mappings().all()
         assert len(playbooks) == 1
         assert playbooks[0]["name"] == "edit-then-test"
         assert playbooks[0]["confidence"] == 0.7
@@ -367,33 +324,35 @@ class TestDistillSync:
         """Second distill should include existing entries in prompt."""
         _seed_episodes(conn)
         conn.execute(
-            "INSERT INTO playbook_entries (name, context, action, confidence, maturity, evidence) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            ("existing-rule", "some context", "some action", 0.5, "nascent", "[]"),
+            text("INSERT INTO playbook_entries (name, context, action, confidence, maturity, evidence) "
+                 "VALUES (:name, :ctx, :action, :conf, :mat, :ev)"),
+            {"name": "existing-rule", "ctx": "some context", "action": "some action",
+             "conf": 0.5, "mat": "nascent", "ev": "[]"},
         )
         conn.commit()
 
-        existing = conn.execute("SELECT * FROM playbook_entries").fetchall()
+        existing = conn.execute(text("SELECT * FROM playbook_entries")).mappings().all()
         playbooks_text = "\n".join(f"- {p['name']}" for p in existing)
 
         assert "existing-rule" in playbooks_text
 
 
-# ── Full sync routine pipeline ──
+# -- Full sync routine pipeline --
 
 class TestRoutineSync:
     def test_full_sync_routine(self, conn):
-        """episodes + playbook in DB → format prompt → LLM → parse → store routine."""
+        """episodes + playbook in DB -> format prompt -> LLM -> parse -> store routine."""
         _seed_episodes(conn)
         conn.execute(
-            "INSERT INTO playbook_entries (name, context, action, confidence, maturity, evidence) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            ("edit-then-test", "After changes", "Run tests", 0.7, "developing", "[1,2]"),
+            text("INSERT INTO playbook_entries (name, context, action, confidence, maturity, evidence) "
+                 "VALUES (:name, :ctx, :action, :conf, :mat, :ev)"),
+            {"name": "edit-then-test", "ctx": "After changes", "action": "Run tests",
+             "conf": 0.7, "mat": "developing", "ev": "[1,2]"},
         )
         conn.commit()
 
-        episodes = conn.execute("SELECT * FROM episodes").fetchall()
-        playbooks = conn.execute("SELECT * FROM playbook_entries").fetchall()
+        episodes = conn.execute(text("SELECT * FROM episodes")).mappings().all()
+        playbooks = conn.execute(text("SELECT * FROM playbook_entries")).mappings().all()
 
         episodes_text = "\n".join(f"Episode #{e['id']}:\n{e['summary']}" for e in episodes)
         playbooks_text = "\n".join(f"- {p['name']}" for p in playbooks)
@@ -406,22 +365,25 @@ class TestRoutineSync:
         llm = MockSyncLLM([ROUTINE_LLM_RESPONSE])
         resp = llm.complete(prompt, "opus")
 
-        text = resp.text.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1].rsplit("```", 1)[0]
-        entries = json.loads(text)
+        resp_text = resp.text.strip()
+        if resp_text.startswith("```"):
+            resp_text = resp_text.split("\n", 1)[1].rsplit("```", 1)[0]
+        entries = json.loads(resp_text)
 
         for entry in entries:
             conn.execute(
-                "INSERT INTO routines (name, trigger, goal, steps, uses, confidence, maturity) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (entry["name"], entry.get("trigger", ""), entry.get("goal", ""),
-                 json.dumps(entry.get("steps", [])), json.dumps(entry.get("uses", [])),
-                 entry.get("confidence", 0.4), entry.get("maturity", "nascent")),
+                text("INSERT INTO routines (name, trigger, goal, steps, uses, confidence, maturity) "
+                     "VALUES (:name, :trigger, :goal, :steps, :uses, :conf, :mat)"),
+                {"name": entry["name"], "trigger": entry.get("trigger", ""),
+                 "goal": entry.get("goal", ""),
+                 "steps": json.dumps(entry.get("steps", [])),
+                 "uses": json.dumps(entry.get("uses", [])),
+                 "conf": entry.get("confidence", 0.4),
+                 "mat": entry.get("maturity", "nascent")},
             )
         conn.commit()
 
-        routines = conn.execute("SELECT * FROM routines").fetchall()
+        routines = conn.execute(text("SELECT * FROM routines")).mappings().all()
         assert len(routines) == 1
         assert routines[0]["name"] == "code-edit-cycle"
         steps = json.loads(routines[0]["steps"])
@@ -432,14 +394,15 @@ class TestRoutineSync:
     def test_routine_prompt_includes_playbooks_and_episodes(self, conn):
         _seed_episodes(conn)
         conn.execute(
-            "INSERT INTO playbook_entries (name, context, action, confidence, maturity, evidence) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            ("my-rule", "ctx", "act", 0.5, "nascent", "[]"),
+            text("INSERT INTO playbook_entries (name, context, action, confidence, maturity, evidence) "
+                 "VALUES (:name, :ctx, :action, :conf, :mat, :ev)"),
+            {"name": "my-rule", "ctx": "ctx", "action": "act",
+             "conf": 0.5, "mat": "nascent", "ev": "[]"},
         )
         conn.commit()
 
-        episodes = conn.execute("SELECT * FROM episodes").fetchall()
-        playbooks = conn.execute("SELECT * FROM playbook_entries").fetchall()
+        episodes = conn.execute(text("SELECT * FROM episodes")).mappings().all()
+        playbooks = conn.execute(text("SELECT * FROM playbook_entries")).mappings().all()
 
         episodes_text = "\n".join(f"Episode #{e['id']}:\n{e['summary']}" for e in episodes)
         playbooks_text = "\n".join(f"- {p['name']}" for p in playbooks)
@@ -451,12 +414,12 @@ class TestRoutineSync:
         assert "Edited Python code" in prompt
 
 
-# ── Full sync chain L1 → L2 → L3 ──
+# -- Full sync chain L1 -> L2 -> L3 --
 
 class TestFullSyncChain:
     def test_frames_to_routines_sync(self, conn):
-        """Complete sync chain: seed frames → episode → distill → routine."""
-        # L1: Frames → Episodes
+        """Complete sync chain: seed frames -> episode -> distill -> routine."""
+        # L1: Frames -> Episodes
         screen_ids = _seed_frames(conn, 5)
         frames = _load_frames_sync(conn, screen_ids, [])
         prompt = EPISODE_PROMPT.format(context=build_context(frames))
@@ -465,41 +428,46 @@ class TestFullSyncChain:
         _store_episodes_sync(conn, tasks, frames)
         conn.commit()
 
-        # L2: Episodes → Playbook
-        episodes = conn.execute("SELECT * FROM episodes").fetchall()
+        # L2: Episodes -> Playbook
+        episodes = conn.execute(text("SELECT * FROM episodes")).mappings().all()
         ep_text = "\n".join(f"Episode #{e['id']}:\n{e['summary']}" for e in episodes)
         dist_prompt = DISTILL_PROMPT.format(playbooks="(none)", episodes=ep_text)
         llm2 = MockSyncLLM([DISTILL_LLM_RESPONSE])
         entries = validate_playbooks(llm2.complete(dist_prompt, "opus").text)
         for entry in entries:
             conn.execute(
-                "INSERT INTO playbook_entries (name, context, action, confidence, maturity, evidence) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (entry["name"], entry.get("context", ""), entry.get("action", ""),
-                 entry["confidence"], entry["maturity"], json.dumps(entry.get("evidence", []))),
+                text("INSERT INTO playbook_entries (name, context, action, confidence, maturity, evidence) "
+                     "VALUES (:name, :ctx, :action, :conf, :mat, :ev)"),
+                {"name": entry["name"], "ctx": entry.get("context", ""),
+                 "action": entry.get("action", ""),
+                 "conf": entry["confidence"], "mat": entry["maturity"],
+                 "ev": json.dumps(entry.get("evidence", []))},
             )
         conn.commit()
 
-        # L3: Episodes + Playbook → Routines
-        playbooks = conn.execute("SELECT * FROM playbook_entries").fetchall()
+        # L3: Episodes + Playbook -> Routines
+        playbooks = conn.execute(text("SELECT * FROM playbook_entries")).mappings().all()
         pb_text = "\n".join(f"- {p['name']}" for p in playbooks)
         rtn_prompt = ROUTINE_PROMPT.format(playbooks=pb_text, routines="(none)", episodes=ep_text)
         llm3 = MockSyncLLM([ROUTINE_LLM_RESPONSE])
-        text = llm3.complete(rtn_prompt, "opus").text
-        rtn_entries = json.loads(text)
+        resp_text = llm3.complete(rtn_prompt, "opus").text
+        rtn_entries = json.loads(resp_text)
         for entry in rtn_entries:
             conn.execute(
-                "INSERT INTO routines (name, trigger, goal, steps, uses, confidence, maturity) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (entry["name"], entry.get("trigger", ""), entry.get("goal", ""),
-                 json.dumps(entry.get("steps", [])), json.dumps(entry.get("uses", [])),
-                 entry.get("confidence", 0.4), entry.get("maturity", "nascent")),
+                text("INSERT INTO routines (name, trigger, goal, steps, uses, confidence, maturity) "
+                     "VALUES (:name, :trigger, :goal, :steps, :uses, :conf, :mat)"),
+                {"name": entry["name"], "trigger": entry.get("trigger", ""),
+                 "goal": entry.get("goal", ""),
+                 "steps": json.dumps(entry.get("steps", [])),
+                 "uses": json.dumps(entry.get("uses", [])),
+                 "conf": entry.get("confidence", 0.4),
+                 "mat": entry.get("maturity", "nascent")},
             )
         conn.commit()
 
         # Verify all in DB
-        assert len(conn.execute("SELECT * FROM episodes").fetchall()) == 2
-        assert len(conn.execute("SELECT * FROM playbook_entries").fetchall()) == 1
-        routines = conn.execute("SELECT * FROM routines").fetchall()
+        assert len(conn.execute(text("SELECT * FROM episodes")).mappings().all()) == 2
+        assert len(conn.execute(text("SELECT * FROM playbook_entries")).mappings().all()) == 1
+        routines = conn.execute(text("SELECT * FROM routines")).mappings().all()
         assert len(routines) == 1
         assert json.loads(routines[0]["uses"]) == ["edit-then-test"]

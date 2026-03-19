@@ -5,6 +5,8 @@ services:
       POSTGRES_DB: observer
       POSTGRES_USER: observer
       POSTGRES_PASSWORD: observer
+    ports:
+      - "15432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -21,7 +23,9 @@ services:
     volumes:
       - engine-data:/data
       - ${HOME}/.observer/frames:/data/frames:ro
+      - ./sources/builtin:/app/sources/builtin:ro
     environment:
+      - SOURCES_DIR=/app/sources/builtin
       - DATABASE_URL=postgresql+asyncpg://observer:observer@db:5432/observer
       - DATABASE_URL_SYNC=postgresql+psycopg://observer:observer@db:5432/observer
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}

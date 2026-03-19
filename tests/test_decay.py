@@ -2,21 +2,13 @@
 
 from datetime import datetime, timedelta, timezone
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from engine.storage.models import Base, PlaybookEntry, Routine
+from engine.storage.models import PlaybookEntry, Routine
 from engine.pipeline.decay import decay_confidence
 
 
 @pytest.fixture
-def session(tmp_path):
-    db_path = str(tmp_path / "test.db")
-    engine = create_engine(f"sqlite:///{db_path}")
-    Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine)
-    s = Session()
-    yield s
-    s.close()
+def session(sync_session):
+    return sync_session
 
 
 def _insert(session, name, confidence, last_evidence_at=None):

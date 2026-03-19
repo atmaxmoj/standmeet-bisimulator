@@ -20,13 +20,7 @@ def _memory_dir(tmp_path):
     mf.MEMORY_DIR = old
 
 
-@pytest.fixture
-async def db(tmp_path):
-    path = str(tmp_path / "test.db")
-    d = DB(f"sqlite+aiosqlite:///{path}")
-    await d.connect()
-    yield d
-    await d.close()
+## db fixture is inherited from conftest.py
 
 
 @pytest.fixture

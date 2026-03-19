@@ -1,22 +1,15 @@
 """Tests for daily budget checking."""
 
 import pytest
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
-from engine.storage.models import Base, TokenUsage, State
+from sqlalchemy import text
+from engine.storage.models import TokenUsage, State
 from engine.pipeline.budget import check_daily_budget
 from engine.pipeline.repository import get_daily_spend, get_budget_cap
 
 
 @pytest.fixture
-def session(tmp_path):
-    db_path = str(tmp_path / "test.db")
-    engine = create_engine(f"sqlite:///{db_path}")
-    Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine)
-    s = Session()
-    yield s
-    s.close()
+def session(sync_session):
+    return sync_session
 
 
 class TestCheckDailyBudget:
@@ -51,7 +44,7 @@ class TestCheckDailyBudget:
         # Insert old record (2 days ago) using raw SQL for datetime manipulation
         session.execute(
             text("INSERT INTO token_usage (model, layer, input_tokens, output_tokens, cost_usd, created_at) "
-                 "VALUES (:model, :layer, :input_tokens, :output_tokens, :cost_usd, datetime('now', '-2 days'))"),
+                 "VALUES (:model, :layer, :input_tokens, :output_tokens, :cost_usd, NOW() - INTERVAL '2 days')"),
             {"model": "opus", "layer": "distill", "input_tokens": 1000, "output_tokens": 500, "cost_usd": 5.00},
         )
         session.commit()
@@ -72,7 +65,7 @@ class TestGetDailySpend:
         session.add(TokenUsage(model="haiku", layer="episode", input_tokens=100, output_tokens=50, cost_usd=0.50))
         session.execute(
             text("INSERT INTO token_usage (model, layer, input_tokens, output_tokens, cost_usd, created_at) "
-                 "VALUES (:model, :layer, :input_tokens, :output_tokens, :cost_usd, datetime('now', '-2 days'))"),
+                 "VALUES (:model, :layer, :input_tokens, :output_tokens, :cost_usd, NOW() - INTERVAL '2 days')"),
             {"model": "opus", "layer": "distill", "input_tokens": 200, "output_tokens": 100, "cost_usd": 3.00},
         )
         session.commit()

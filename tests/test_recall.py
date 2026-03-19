@@ -1,21 +1,13 @@
 """Tests for episode recall tools."""
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from engine.storage.models import Base, Episode
+from engine.storage.models import Episode
 from engine.agents.repository import search_episodes, get_recent_episodes, get_episodes_by_app
 
 
 @pytest.fixture
-def session(tmp_path):
-    db_path = str(tmp_path / "test.db")
-    engine = create_engine(f"sqlite:///{db_path}")
-    Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine)
-    s = Session()
-    yield s
-    s.close()
+def session(sync_session):
+    return sync_session
 
 
 def _insert_episode(session, summary, app_names="[]", started_at="2026-03-15T10:00:00Z",
@@ -38,11 +30,13 @@ class TestSearchEpisodes:
         assert len(results) == 1
         assert "Python" in results[0]["summary"]
 
-    def test_case_insensitive_like(self, session):
+    def test_case_sensitive_like(self, session):
         _insert_episode(session, "Writing Python code")
-        results = search_episodes(session, "python")
-        # SQLite LIKE is case-insensitive for ASCII
+        # PostgreSQL LIKE is case-sensitive
+        results = search_episodes(session, "Python")
         assert len(results) == 1
+        results = search_episodes(session, "python")
+        assert len(results) == 0
 
     def test_limit(self, session):
         for i in range(10):

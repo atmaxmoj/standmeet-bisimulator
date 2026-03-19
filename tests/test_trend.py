@@ -1,21 +1,13 @@
 """Tests for playbook trend query tools."""
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from engine.storage.models import Base, PlaybookEntry, PlaybookHistory
+from engine.storage.models import PlaybookEntry, PlaybookHistory
 from engine.agents.repository import get_playbook_history, get_stale_entries, get_similar_entries
 
 
 @pytest.fixture
-def session(tmp_path):
-    db_path = str(tmp_path / "test.db")
-    engine = create_engine(f"sqlite:///{db_path}")
-    Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine)
-    s = Session()
-    yield s
-    s.close()
+def session(sync_session):
+    return sync_session
 
 
 def _insert_playbook(session, name, confidence=0.5, maturity="nascent", evidence="[]",

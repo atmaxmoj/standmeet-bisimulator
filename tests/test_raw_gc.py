@@ -1,9 +1,8 @@
 """Tests for raw data GC tools (frames, audio, os_events, pipeline_logs)."""
 
 import pytest
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
-from engine.storage.models import Base, Frame, AudioFrame, OsEvent, PipelineLog
+from sqlalchemy import text
+from engine.storage.models import Frame, AudioFrame, OsEvent, PipelineLog
 from engine.agents.repository import (
     get_data_stats,
     get_oldest_processed,
@@ -15,14 +14,8 @@ from engine.agents.repository import (
 
 
 @pytest.fixture
-def session(tmp_path):
-    db_path = str(tmp_path / "test.db")
-    engine = create_engine(f"sqlite:///{db_path}")
-    Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine)
-    s = Session()
-    yield s
-    s.close()
+def session(sync_session):
+    return sync_session
 
 
 class TestGetDataStats:
@@ -90,7 +83,7 @@ class TestPurgeProcessedFrames:
         session.add(Frame(timestamp="t1", processed=1, image_path=str(img_file), created_at="2026-03-01T00:00:00Z"))
         # Recent processed frame -- should NOT be purged
         session.execute(
-            text("INSERT INTO frames (timestamp, processed, created_at) VALUES (:ts, :p, datetime('now'))"),
+            text("INSERT INTO frames (timestamp, processed, created_at) VALUES (:ts, :p, NOW())"),
             {"ts": "t2", "p": 1},
         )
         # Unprocessed frame -- should NOT be purged
