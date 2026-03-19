@@ -50,20 +50,42 @@ test.describe("Dashboard", () => {
     await page.screenshot({ path: "tests/screenshots/audio.png", fullPage: true });
   });
 
-  test("Episodes panel loads", async ({ page }) => {
+  test("Episodes panel shows extracted episodes with summaries", async ({ page }) => {
     await page.goto("/");
     await nav(page, "episodes");
     const panel = page.getByTestId("episodes-panel");
     await expect(panel).toBeVisible({ timeout: 10000 });
+
+    // Should have at least one episode card with a real summary
+    const cards = panel.getByTestId("episode-card");
+    await expect(cards.first()).toBeVisible({ timeout: 10000 });
+
+    // Summary should contain actual content, not be empty
+    const text = await cards.first().textContent();
+    expect(text!.length).toBeGreaterThan(20);
+
     await page.screenshot({ path: "tests/screenshots/episodes.png", fullPage: true });
   });
 
-  test("Playbook panel loads", async ({ page }) => {
+  test("Playbook panel shows entries with non-empty content", async ({ page }) => {
     await page.goto("/");
     await nav(page, "playbooks");
     const panel = page.getByTestId("playbooks-panel");
     await expect(panel).toBeVisible({ timeout: 10000 });
     await expect(page.getByRole("button", { name: "Run Distill" })).toBeVisible();
+
+    // Should have at least one playbook entry
+    const cards = panel.getByTestId("playbook-card");
+    await expect(cards.first()).toBeVisible({ timeout: 10000 });
+
+    // Entry content must NOT be raw empty JSON like {"intuition": "", "action": ""}
+    const text = await cards.first().textContent();
+    expect(text).not.toContain('"intuition"');
+    expect(text).not.toContain('"action": ""');
+
+    // Should contain When/Then from the distilled content
+    expect(text!.length).toBeGreaterThan(30);
+
     await page.screenshot({ path: "tests/screenshots/playbook.png", fullPage: true });
   });
 

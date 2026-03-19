@@ -80,7 +80,7 @@ export function PlaybooksPanel() {
       ) : (
         <div className="space-y-3">
           {playbooks.map((p) => (
-            <Card key={p.id}
+            <Card key={p.id} data-testid="playbook-card"
               className={`cursor-pointer transition-colors ${sel.selected.has(p.id) ? "ring-1 ring-primary bg-primary/5" : "hover:bg-accent/50"}`}
               onClick={() => sel.toggle(p.id)} onContextMenu={(e) => { e.preventDefault(); sel.toggle(p.id); }}
             >
