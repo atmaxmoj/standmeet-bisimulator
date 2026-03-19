@@ -152,6 +152,44 @@ def parse_json_stream_multiline(stream) -> list[dict]:
     return entries
 
 
+class _ByteStreamAdapter:
+    """Wraps a text or bytes stream into a bytes stream for ijson.
+
+    Skips everything before the first '[' (log stream prints a
+    'Filtering...' line before the JSON array).
+    """
+
+    def __init__(self, stream):
+        self._stream = stream
+        self._found = False
+        self._leftover = b""
+
+    def read(self, size=4096):
+        if self._leftover:
+            out = self._leftover[:size]
+            self._leftover = self._leftover[size:]
+            return out
+
+        chunk = self._stream.read(size)
+        if not chunk:
+            return b""
+        if isinstance(chunk, str):
+            chunk = chunk.encode("utf-8")
+
+        if not self._found:
+            idx = chunk.find(b"[")
+            if idx == -1:
+                return self.read(size)  # skip, try next chunk
+            self._found = True
+            chunk = chunk[idx:]
+
+        return chunk
+
+
+def _skip_until_bracket(stream):
+    return _ByteStreamAdapter(stream)
+
+
 class OsLogCollector(BaseCollector):
     """Streams macOS os_log events via `log stream` subprocess.
 
@@ -190,60 +228,29 @@ class OsLogCollector(BaseCollector):
         )
 
     def _reader(self, stream):
-        """Background thread: incrementally parse pretty-printed JSON.
+        """Background thread: stream-parse JSON array using ijson.
 
-        `log stream --style json` outputs a JSON array with multi-line
-        entries. Object boundaries can be:
-        - '},{' on one line (compact)
-        - '}' then ',{' on next line (pretty-printed)
-        - '[{' at start, '}]' at end
+        `log stream --style json` outputs a JSON array. ijson yields
+        each object incrementally as it's parsed — no buffering needed.
+        The first line may be a "Filtering..." text which we skip by
+        wrapping in a filter that drops non-JSON prefix bytes.
         """
-        obj_lines: list[str] = []
+        import ijson
 
-        for raw_line in stream:
-            line = raw_line.decode("utf-8", errors="replace") if isinstance(raw_line, bytes) else raw_line
-            stripped = line.strip()
+        # log stream prefixes output with a "Filtering..." line before the JSON.
+        # Wrap the stream to skip bytes until we see '['.
+        byte_stream = _skip_until_bracket(stream)
 
-            if not stripped or stripped in ("[", "]") or stripped.startswith("Filtering"):
-                continue
-
-            # '},{' on one line
-            if stripped.startswith("},{"):
-                obj_lines.append("}")
-                self._emit_object("\n".join(obj_lines))
-                obj_lines = ["{" + stripped[2:]]
-            # ',{' on its own line (boundary after previous '}')
-            elif stripped.startswith(",{"):
-                if obj_lines:
-                    self._emit_object("\n".join(obj_lines))
-                obj_lines = [stripped[1:]]  # strip leading comma
-            elif stripped.startswith("[{"):
-                obj_lines = [stripped[1:]]
-            elif stripped.endswith("}]"):
-                obj_lines.append(stripped[:-1])
-                self._emit_object("\n".join(obj_lines))
-                obj_lines = []
-            else:
-                obj_lines.append(stripped)
-
-        if obj_lines:
-            self._emit_object("\n".join(obj_lines))
-
-    def _emit_object(self, text: str):
-        """Parse a single JSON object string, classify, and buffer."""
-        text = text.strip().rstrip(",")
-        if not text.startswith("{"):
-            return
         try:
-            entry = json.loads(text)
-        except json.JSONDecodeError:
-            return
-        category = classify_event(entry)
-        if category is None:
-            return
-        timestamp = entry.get("timestamp", "")
-        data = format_event(entry, category)
-        self._buffer.append((timestamp, category, data))
+            for entry in ijson.items(byte_stream, "item"):
+                category = classify_event(entry)
+                if category is None:
+                    continue
+                timestamp = entry.get("timestamp", "")
+                data = format_event(entry, category)
+                self._buffer.append((timestamp, category, data))
+        except Exception:
+            logger.debug("os_log: ijson stream ended or errored")
 
     def _start(self):
         if self._started:

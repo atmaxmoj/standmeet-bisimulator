@@ -171,7 +171,7 @@ class TestFormatEvent:
 
 
 class TestOsLogCollector:
-    def _make_stream(self, entries: list[dict]) -> io.StringIO:
+    def _make_stream(self, entries: list[dict]) -> io.BytesIO:
         """Create a fake log stream JSON output (pretty-printed, like real `log stream`)."""
         import json as _json
         parts = []
@@ -179,7 +179,7 @@ class TestOsLogCollector:
             prefix = "[" if i == 0 else ","
             parts.append(prefix + _json.dumps(entry, indent=2))
         parts.append("]")
-        return io.StringIO("\n".join(parts) + "\n")
+        return io.BytesIO(("\n".join(parts) + "\n").encode())
 
     def test_collect_from_stream(self):
         stream = self._make_stream([
@@ -198,7 +198,8 @@ class TestOsLogCollector:
         ])
 
         collector = OsLogCollector(stdin=stream)
-        time.sleep(0.1)  # Let reader thread process
+        collector.collect()  # starts reader thread
+        time.sleep(0.2)  # let reader thread process
         events = collector.collect()
 
         assert len(events) == 2
