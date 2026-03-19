@@ -9,9 +9,7 @@ from engine.storage.models import Base
 
 def create_sync_engine(url: str):
     """Create a sync SQLAlchemy engine from a URL."""
-    engine = _create_engine(url, echo=False)
-    Base.metadata.create_all(engine)
-    return engine
+    return _create_engine(url, echo=False)
 
 
 def get_sync_session_factory(url: str) -> sessionmaker[Session]:

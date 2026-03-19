@@ -106,6 +106,12 @@ def on_new_data():
         registry = get_global_registry()
         source_frames_dict = load_unprocessed_source_frames(session, registry) if registry else {}
 
+        logger.info(
+            "on_new_data: screen=%d audio=%d os=%d registry=%s sources=%s",
+            len(screen_frames), len(audio_frames), len(os_frames),
+            registry is not None, {k: len(v) for k, v in source_frames_dict.items()} if source_frames_dict else {},
+        )
+
         if not screen_frames and not audio_frames and not os_frames and not source_frames_dict:
             return
 

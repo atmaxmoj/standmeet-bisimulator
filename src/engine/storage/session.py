@@ -26,7 +26,6 @@ def get_session(conn_or_url) -> Session:
 
     if url not in _factory_cache:
         engine = _sa_create_engine(url)
-        Base.metadata.create_all(engine)
         _factory_cache[url] = sessionmaker(bind=engine)
     return _factory_cache[url]()
 
