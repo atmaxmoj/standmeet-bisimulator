@@ -8,7 +8,20 @@ import { SelectionBar } from "@/components/SelectionBar";
 import { SearchInput } from "@/components/SearchInput";
 
 function parseAction(raw: string): string {
-  try { return JSON.parse(raw).action || raw; } catch { return raw; }
+  try {
+    const obj = JSON.parse(raw);
+    // New format: when/then/because/boundary
+    if (obj.when || obj.then) {
+      const parts: string[] = [];
+      if (obj.when) parts.push(`When: ${obj.when}`);
+      if (obj.then) parts.push(`Then: ${obj.then}`);
+      if (obj.because) parts.push(`Because: ${obj.because}`);
+      if (obj.boundary) parts.push(`Boundary: ${obj.boundary}`);
+      return parts.join("\n");
+    }
+    // Legacy format
+    return obj.action || obj.intuition || raw;
+  } catch { return raw; }
 }
 
 const maturityVariant: Record<string, "default" | "secondary" | "outline" | "destructive"> = {

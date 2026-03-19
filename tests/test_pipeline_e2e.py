@@ -92,11 +92,11 @@ EPISODE_LLM_RESPONSE = json.dumps([
 DISTILL_LLM_RESPONSE = json.dumps([
     {
         "name": "edit-then-test",
-        "context": "After making code changes",
-        "intuition": "Run tests to verify",
-        "action": "Execute test suite after each editing session",
-        "why": "Catch regressions early",
-        "counterexample": None,
+        "type": "deep-work",
+        "when": "After making code changes",
+        "then": "Execute test suite after each editing session",
+        "because": "Catch regressions early",
+        "boundary": None,
         "confidence": 0.7,
         "maturity": "developing",
         "evidence": [1, 2],
@@ -226,6 +226,12 @@ class TestDistillE2E:
         assert playbooks[0]["name"] == "edit-then-test"
         assert playbooks[0]["confidence"] == 0.7
         assert playbooks[0]["maturity"] == "developing"
+        assert playbooks[0]["context"] == "After making code changes"
+        # action is rich JSON with when/then/because/boundary
+        action = json.loads(playbooks[0]["action"])
+        assert action["when"] == "After making code changes"
+        assert action["then"] == "Execute test suite after each editing session"
+        assert action["because"] == "Catch regressions early"
 
     @pytest.mark.asyncio
     async def test_distill_no_episodes_skips(self, db):

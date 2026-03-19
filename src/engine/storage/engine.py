@@ -4,7 +4,6 @@ from sqlalchemy import create_engine as _create_engine
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import sessionmaker, Session
 
-from engine.storage.models import Base
 
 
 def create_sync_engine(url: str):

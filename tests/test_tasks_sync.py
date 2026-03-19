@@ -46,11 +46,11 @@ EPISODE_LLM_RESPONSE = json.dumps([
 DISTILL_LLM_RESPONSE = json.dumps([
     {
         "name": "edit-then-test",
-        "context": "After code changes",
-        "intuition": "Run tests",
-        "action": "Execute test suite",
-        "why": "Catch regressions",
-        "counterexample": None,
+        "type": "deep-work",
+        "when": "After code changes",
+        "then": "Execute test suite",
+        "because": "Catch regressions",
+        "boundary": None,
         "confidence": 0.7,
         "maturity": "developing",
         "evidence": [1, 2],

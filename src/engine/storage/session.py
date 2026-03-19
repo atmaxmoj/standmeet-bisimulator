@@ -5,7 +5,6 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import create_engine as _sa_create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from engine.storage.models import Base
 from engine.config import Settings
 
 _factory_cache: dict[str, sessionmaker] = {}

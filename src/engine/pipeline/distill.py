@@ -55,14 +55,14 @@ async def daily_distill(
     count = 0
     for entry in entries:
         rich_action = json.dumps({
-            "intuition": entry.get("intuition", ""),
-            "action": entry.get("action", ""),
-            "why": entry.get("why", ""),
-            "counterexample": entry.get("counterexample"),
+            "when": entry.get("when", ""),
+            "then": entry.get("then", ""),
+            "because": entry.get("because", ""),
+            "boundary": entry.get("boundary"),
         }, ensure_ascii=False)
         await db.upsert_playbook(
             name=entry["name"],
-            context=entry.get("context", ""),
+            context=entry.get("when", ""),
             action=rich_action,
             confidence=entry.get("confidence", 0.5),
             evidence=json.dumps(entry.get("evidence", [])),
