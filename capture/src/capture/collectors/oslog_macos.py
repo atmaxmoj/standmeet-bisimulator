@@ -190,19 +190,60 @@ class OsLogCollector(BaseCollector):
         )
 
     def _reader(self, stream):
-        """Background thread: read lines, parse, classify, buffer.
+        """Background thread: incrementally parse pretty-printed JSON.
 
-        `log stream --style json` outputs pretty-printed JSON, so we
-        accumulate lines and parse multi-line entries.
+        `log stream --style json` outputs a JSON array with multi-line
+        entries. Object boundaries can be:
+        - '},{' on one line (compact)
+        - '}' then ',{' on next line (pretty-printed)
+        - '[{' at start, '}]' at end
         """
-        entries = parse_json_stream_multiline(stream)
-        for entry in entries:
-            category = classify_event(entry)
-            if category is None:
+        obj_lines: list[str] = []
+
+        for raw_line in stream:
+            line = raw_line.decode("utf-8", errors="replace") if isinstance(raw_line, bytes) else raw_line
+            stripped = line.strip()
+
+            if not stripped or stripped in ("[", "]") or stripped.startswith("Filtering"):
                 continue
-            timestamp = entry.get("timestamp", "")
-            data = format_event(entry, category)
-            self._buffer.append((timestamp, category, data))
+
+            # '},{' on one line
+            if stripped.startswith("},{"):
+                obj_lines.append("}")
+                self._emit_object("\n".join(obj_lines))
+                obj_lines = ["{" + stripped[2:]]
+            # ',{' on its own line (boundary after previous '}')
+            elif stripped.startswith(",{"):
+                if obj_lines:
+                    self._emit_object("\n".join(obj_lines))
+                obj_lines = [stripped[1:]]  # strip leading comma
+            elif stripped.startswith("[{"):
+                obj_lines = [stripped[1:]]
+            elif stripped.endswith("}]"):
+                obj_lines.append(stripped[:-1])
+                self._emit_object("\n".join(obj_lines))
+                obj_lines = []
+            else:
+                obj_lines.append(stripped)
+
+        if obj_lines:
+            self._emit_object("\n".join(obj_lines))
+
+    def _emit_object(self, text: str):
+        """Parse a single JSON object string, classify, and buffer."""
+        text = text.strip().rstrip(",")
+        if not text.startswith("{"):
+            return
+        try:
+            entry = json.loads(text)
+        except json.JSONDecodeError:
+            return
+        category = classify_event(entry)
+        if category is None:
+            return
+        timestamp = entry.get("timestamp", "")
+        data = format_event(entry, category)
+        self._buffer.append((timestamp, category, data))
 
     def _start(self):
         if self._started:
