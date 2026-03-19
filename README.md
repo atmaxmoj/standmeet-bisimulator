@@ -228,6 +228,10 @@ npm run test:sources    # framework unit tests only
 
 367 tests: 320 engine (pytest/PostgreSQL) + 30 framework + 17 Playwright e2e.
 
+## License
+
+[AGPL-3.0](LICENSE). Free for personal use. Corporations: open-source your modifications or [purchase a commercial license](mailto:nickmaxzhang@gmail.com).
+
 ---
 
 <div align="center">
