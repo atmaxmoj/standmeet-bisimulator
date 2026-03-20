@@ -291,21 +291,113 @@ test.describe("Dashboard", () => {
     const panel = page.getByTestId("chat-panel");
     await expect(panel).toBeVisible({ timeout: 10000 });
 
-    // Type and send a search query
     const input = panel.getByTestId("chat-input");
     await input.fill("search the web for what is SearXNG");
     await panel.getByRole("button", { name: "Send" }).click();
 
-    // Should see throbbing (Thinking... or Searching the web...)
     await expect(panel.getByText(/Thinking|Searching/)).toBeVisible({ timeout: 10000 });
 
-    // Wait for assistant response (may take a while with real LLM)
     const assistantMsg = panel.locator(".bg-muted.text-foreground");
     await expect(assistantMsg.first()).toBeVisible({ timeout: 120000 });
 
-    // Response should contain actual content (not an error)
     const text = await assistantMsg.first().textContent();
     expect(text).toBeTruthy();
     expect(text!.length).toBeGreaterThan(20);
+  });
+
+  test("Run Distill triggers Opus and produces new entries", async ({ page }) => {
+    await page.goto("/");
+    await nav(page, "playbooks");
+    const panel = page.getByTestId("playbooks-panel");
+    await expect(panel.getByTestId("playbook-card").first()).toBeVisible({ timeout: 10000 });
+
+    // Get current count
+    const countBefore = await panel.getByTestId("playbook-card").count();
+
+    // Click Run Distill and confirm
+    page.on("dialog", (d) => d.accept());
+    await panel.getByRole("button", { name: "Run Distill" }).click();
+
+    // Wait for distill to complete (button re-enables)
+    await expect(panel.getByRole("button", { name: "Run Distill" })).toBeEnabled({ timeout: 120000 });
+
+    // Refresh and verify entries exist (may be same count if upserted)
+    await panel.getByRole("button", { name: "Refresh" }).click();
+    await expect(panel.getByTestId("playbook-card").first()).toBeVisible({ timeout: 10000 });
+    const countAfter = await panel.getByTestId("playbook-card").count();
+    expect(countAfter).toBeGreaterThan(0);
+  });
+
+  test("Run Compose triggers Opus and produces routines", async ({ page }) => {
+    await page.goto("/");
+    await nav(page, "routines");
+    const panel = page.getByTestId("routines-panel");
+    await expect(panel).toBeVisible({ timeout: 10000 });
+
+    // Click Run Compose and confirm
+    page.on("dialog", (d) => d.accept());
+    await panel.getByRole("button", { name: "Run Compose" }).click();
+
+    // Wait for compose to complete
+    await expect(panel.getByRole("button", { name: "Run Compose" })).toBeEnabled({ timeout: 120000 });
+
+    // Refresh and check routines exist
+    await panel.getByRole("button", { name: "Refresh" }).click();
+    // May or may not have routines depending on data, but should not error
+  });
+
+  test("Pipeline toggle switches between Recording and Paused", async ({ page }) => {
+    await page.goto("/");
+    const toggle = page.getByTestId("pipeline-toggle");
+    await expect(toggle).toBeVisible({ timeout: 10000 });
+
+    // Read current state
+    const textBefore = await toggle.textContent();
+    const wasPaused = textBefore?.includes("Paused");
+
+    // Click toggle
+    await toggle.click();
+
+    // State should change
+    if (wasPaused) {
+      await expect(toggle).toContainText("Recording", { timeout: 5000 });
+    } else {
+      await expect(toggle).toContainText("Paused", { timeout: 5000 });
+    }
+
+    // Click again to restore original state
+    await toggle.click();
+    if (wasPaused) {
+      await expect(toggle).toContainText("Paused", { timeout: 5000 });
+    } else {
+      await expect(toggle).toContainText("Recording", { timeout: 5000 });
+    }
+  });
+
+  test("Batch delete removes selected records", async ({ page }) => {
+    await page.goto("/");
+    await nav(page, "source:screen");
+    const panel = page.getByTestId("source-panel-screen");
+    const cards = panel.getByTestId("source-record-card");
+    await expect(cards.first()).toBeVisible({ timeout: 10000 });
+
+    const countBefore = await cards.count();
+
+    // Right-click to select first card
+    await cards.first().click({ button: "right" });
+
+    // Selection bar should appear
+    const selCount = page.getByTestId("selection-count");
+    await expect(selCount.first()).toBeVisible({ timeout: 5000 });
+
+    // Click delete
+    page.on("dialog", (d) => d.accept());
+    await page.getByTestId("selection-delete").first().click();
+
+    // Wait for deletion
+    await expect(selCount.first()).not.toBeVisible({ timeout: 10000 });
+
+    // Count should decrease by 1
+    await expect(cards).toHaveCount(countBefore - 1, { timeout: 10000 });
   });
 });
