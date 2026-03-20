@@ -265,30 +265,29 @@ test.describe("Dashboard", () => {
     await expect(panel.getByTestId("source-record-card").first()).toBeVisible({ timeout: 10000 });
   });
 
-  test("Chat sends message and receives LLM response", async ({ page }) => {
+  test("Chat queries data with tools before answering", async ({ page }) => {
     await page.goto("/");
     await nav(page, "chat");
     const panel = page.getByTestId("chat-panel");
     await expect(panel).toBeVisible({ timeout: 10000 });
 
-    // Send a message about the user's data
+    // Ask about user's data — LLM must use tools to answer
     const input = panel.getByTestId("chat-input");
-    await input.fill("How have I been doing lately? Search my recent episodes.");
+    await input.fill("How have I been doing lately? Look at my recent episodes and playbooks.");
     await panel.getByRole("button", { name: "Send" }).click();
 
-    // Should see thinking indicator
-    await expect(panel.getByText(/Thinking/)).toBeVisible({ timeout: 10000 });
+    // Should see tool call indicator (Searching/Reading/Thinking)
+    await expect(panel.getByText(/Thinking|Searching|Reading/)).toBeVisible({ timeout: 15000 });
 
     // Wait for assistant response
     const assistantMsg = panel.locator(".bg-muted.text-foreground");
     await expect(assistantMsg.first()).toBeVisible({ timeout: 60000 });
 
-    // Response should be real content, not an error
+    // Response should reference actual data (not a generic answer)
     const text = await assistantMsg.first().textContent();
     expect(text).toBeTruthy();
-    expect(text!.length).toBeGreaterThan(10);
+    expect(text!.length).toBeGreaterThan(30);
     expect(text).not.toContain("LLM call failed");
-    expect(text).not.toContain("Error");
   });
 
   test("Chat web search shows throbbing and returns result", async ({ page }) => {

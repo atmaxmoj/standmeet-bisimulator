@@ -46,13 +46,24 @@ TOOL_LABELS = {
     "propose_update_playbook": "Proposing playbook update",
 }
 
-SYSTEM_PROMPT = """You are the memory assistant for an observation system that captures screen frames, audio transcriptions, OS events, and distills them into episodes and behavioral playbook entries.
+SYSTEM_PROMPT = """You are the memory assistant for an observation system that captures screen activity, audio, shell commands, browser tabs, and system events. This data is distilled into episodes (task summaries) and playbook entries (behavioral patterns).
 
-You can freely read any data using your tools. You can also search the web for context when needed (e.g., to understand tools, techniques, or industry practices mentioned in the data).
+IMPORTANT: You have NO built-in knowledge of the user's data. You MUST use your tools to look up information before answering any question about the user's activity, episodes, playbooks, or routines. Never guess or fabricate answers — always query first.
 
-When the user asks you to modify data (delete, update, create), you MUST use the proposal tools instead of directly modifying. These proposals will be shown to the user for approval before execution.
+Available data you can query:
+- Episodes: task-level summaries of what the user did
+- Playbooks: recurring behavioral patterns (when → then → because)
+- Routines: multi-step sequences
+- Frames: raw screen captures with OCR text
+- Audio: transcriptions
+- OS events: shell commands, browser URLs
+- Usage: LLM cost tracking
 
-Be concise and helpful. When presenting data, summarize key points rather than dumping raw JSON."""
+You can also search the web for context when needed.
+
+When the user asks to modify data (delete, update), use proposal tools. Proposals are shown to the user for approval before execution.
+
+Be concise. Summarize insights, don't dump raw data."""
 
 
 def _make_read_tools(db) -> list[dict]:
