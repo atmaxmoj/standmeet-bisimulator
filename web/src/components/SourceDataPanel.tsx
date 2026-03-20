@@ -54,6 +54,12 @@ function CellValue({ col, val }: { col: string; val: string }) {
       </div>
     );
   }
+  if (col === "app_name") {
+    return <span className="text-xs font-medium text-primary truncate shrink-0 max-w-36">{val}</span>;
+  }
+  if (col === "window_name") {
+    return <span className="text-[10px] text-muted-foreground truncate shrink-0 max-w-36">{val}</span>;
+  }
   if (BADGE_COLUMNS.has(col) && val) {
     return <Badge variant="outline" className="shrink-0 text-[10px]">{val}</Badge>;
   }
@@ -67,7 +73,12 @@ function CellValue({ col, val }: { col: string; val: string }) {
   if (col === "duration_seconds" && val) {
     return <span className="text-xs text-muted-foreground shrink-0">{Number(val).toFixed(0)}s</span>;
   }
-  // Default: text column
+  if (col === "text") {
+    return (
+      <span className="text-xs text-foreground/80 truncate flex-1 max-h-12 overflow-hidden">{val}</span>
+    );
+  }
+  // Default
   return (
     <span className="text-xs text-foreground/80 truncate flex-1">{val}</span>
   );
