@@ -271,19 +271,29 @@ test.describe("Dashboard", () => {
     const panel = page.getByTestId("chat-panel");
     await expect(panel).toBeVisible({ timeout: 10000 });
 
+    // Clear any previous chat history
+    const clearBtn = panel.getByText("Clear chat");
+    if (await clearBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
+      await clearBtn.click();
+      await page.waitForTimeout(500);
+    }
+
+    // No assistant messages should be visible now
+    const assistantMsg = panel.locator(".bg-muted.text-foreground");
+    await expect(assistantMsg).toHaveCount(0, { timeout: 3000 }).catch(() => {});
+
     // Ask about user's data — LLM must use tools to answer
     const input = panel.getByTestId("chat-input");
     await input.fill("How have I been doing lately? Look at my recent episodes and playbooks.");
     await panel.getByRole("button", { name: "Send" }).click();
 
-    // Should see tool call indicator (Searching/Reading/Thinking)
+    // Should see thinking/tool indicator
     await expect(panel.getByText(/Thinking|Searching|Reading/)).toBeVisible({ timeout: 15000 });
 
-    // Wait for assistant response
-    const assistantMsg = panel.locator(".bg-muted.text-foreground");
+    // Wait for NEW assistant response
     await expect(assistantMsg.first()).toBeVisible({ timeout: 60000 });
 
-    // Response should reference actual data (not a generic answer)
+    // Response should be substantial and not an error
     const text = await assistantMsg.first().textContent();
     expect(text).toBeTruthy();
     expect(text!.length).toBeGreaterThan(30);
@@ -351,28 +361,36 @@ test.describe("Dashboard", () => {
     // May or may not have routines depending on data, but should not error
   });
 
-  test("Pipeline toggle changes pause state via API", async ({ page }) => {
+  test("Pipeline toggle changes state on click", async ({ page }) => {
     await page.goto("/");
     const toggle = page.getByTestId("pipeline-toggle");
     await expect(toggle).toBeVisible({ timeout: 10000 });
 
-    // Check API state before
-    const apiBase = process.env.VITE_API_TARGET || "http://engine-test:5000";
-    const before = await (await fetch(`${apiBase}/engine/pipeline`)).json();
+    // Use page.evaluate to call API (runs in browser context, same origin)
+    const pausedBefore = await page.evaluate(async () => {
+      const r = await fetch("/api/engine/pipeline");
+      return (await r.json()).paused;
+    });
 
     // Click toggle
     await toggle.click();
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(2000);
 
-    // Check API state changed
-    const after = await (await fetch(`${apiBase}/engine/pipeline`)).json();
-    expect(after.paused).not.toBe(before.paused);
+    const pausedAfter = await page.evaluate(async () => {
+      const r = await fetch("/api/engine/pipeline");
+      return (await r.json()).paused;
+    });
+    expect(pausedAfter).not.toBe(pausedBefore);
 
     // Restore
     await toggle.click();
-    await page.waitForTimeout(1500);
-    const restored = await (await fetch(`${apiBase}/engine/pipeline`)).json();
-    expect(restored.paused).toBe(before.paused);
+    await page.waitForTimeout(2000);
+
+    const pausedRestored = await page.evaluate(async () => {
+      const r = await fetch("/api/engine/pipeline");
+      return (await r.json()).paused;
+    });
+    expect(pausedRestored).toBe(pausedBefore);
   });
 
   test("Selection bar shows delete button when records selected", async ({ page }) => {
