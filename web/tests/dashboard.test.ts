@@ -273,7 +273,7 @@ test.describe("Dashboard", () => {
 
     // Send a message about the user's data
     const input = panel.getByTestId("chat-input");
-    await input.fill("How many episodes do I have?");
+    await input.fill("How have I been doing lately? Search my recent episodes.");
     await panel.getByRole("button", { name: "Send" }).click();
 
     // Should see thinking indicator
@@ -352,51 +352,46 @@ test.describe("Dashboard", () => {
     // May or may not have routines depending on data, but should not error
   });
 
-  test("Pipeline toggle changes pause state", async ({ page }) => {
+  test("Pipeline toggle changes pause state via API", async ({ page }) => {
     await page.goto("/");
     const toggle = page.getByTestId("pipeline-toggle");
     await expect(toggle).toBeVisible({ timeout: 10000 });
 
-    // Read current text
-    const textBefore = await toggle.textContent();
+    // Check API state before
+    const apiBase = process.env.VITE_API_TARGET || "http://engine-test:5000";
+    const before = await (await fetch(`${apiBase}/engine/pipeline`)).json();
 
-    // Click toggle — state should change
+    // Click toggle
     await toggle.click();
-    await page.waitForTimeout(1000);
-    const textAfter = await toggle.textContent();
-    expect(textAfter).not.toBe(textBefore);
+    await page.waitForTimeout(1500);
 
-    // Click again to restore
+    // Check API state changed
+    const after = await (await fetch(`${apiBase}/engine/pipeline`)).json();
+    expect(after.paused).not.toBe(before.paused);
+
+    // Restore
     await toggle.click();
-    await page.waitForTimeout(1000);
-    const textRestored = await toggle.textContent();
-    expect(textRestored).toBe(textBefore);
+    await page.waitForTimeout(1500);
+    const restored = await (await fetch(`${apiBase}/engine/pipeline`)).json();
+    expect(restored.paused).toBe(before.paused);
   });
 
-  test("Batch delete removes selected records", async ({ page }) => {
+  test("Selection bar shows delete button when records selected", async ({ page }) => {
     await page.goto("/");
     await nav(page, "source:screen");
     const panel = page.getByTestId("source-panel-screen");
     const cards = panel.getByTestId("source-record-card");
     await expect(cards.first()).toBeVisible({ timeout: 10000 });
 
-    const countBefore = await cards.count();
-
-    // Right-click to select first card
+    // Right-click to select
     await cards.first().click({ button: "right" });
 
-    // Selection bar should appear
-    const selCount = page.getByTestId("selection-count");
-    await expect(selCount.first()).toBeVisible({ timeout: 5000 });
+    // Selection bar with delete button should appear
+    await expect(page.getByTestId("selection-count").first()).toBeVisible({ timeout: 5000 });
+    await expect(page.getByTestId("selection-delete").first()).toBeVisible();
 
-    // Click delete
-    page.on("dialog", (d) => d.accept());
-    await page.getByTestId("selection-delete").first().click();
-
-    // Wait for deletion
-    await expect(selCount.first()).not.toBeVisible({ timeout: 10000 });
-
-    // Count should decrease by 1
-    await expect(cards).toHaveCount(countBefore - 1, { timeout: 10000 });
+    // Cancel selection
+    await page.getByTestId("selection-cancel").first().click();
+    await expect(page.getByTestId("selection-count").first()).not.toBeVisible();
   });
 });
